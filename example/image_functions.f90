@@ -1,6 +1,5 @@
 program load_unload
-    use :: stb_bindings
-    use :: image_transformations
+    use :: image
 
     real, allocatable :: pixels(:, :, :)
     logical :: success

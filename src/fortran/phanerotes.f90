@@ -1,10 +1,4 @@
 module phanerotes
-  implicit none
-  private
+    use :: command, image
 
-  public :: say_hello
-contains
-  subroutine say_hello
-    print *, "Hello, phanerotes!"
-  end subroutine say_hello
 end module phanerotes
