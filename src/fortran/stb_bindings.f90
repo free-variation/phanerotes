@@ -3,7 +3,7 @@ module stb_bindings
     implicit none
 
     interface
-        function load_image(filename, x, y, channels, desired_channels) bind(C, name = "stb_load")
+        function load_image(filename, x, y, channels, desired_channels) bind(C, name = "stbi_load")
             import :: c_ptr, c_int, c_char
 
             character(kind = c_char), intent(in) :: filename(*)
@@ -13,27 +13,33 @@ module stb_bindings
             type(c_ptr) :: load_image
         end function
 
-        function stb_write_png(filename, w, h, comp, data, stride_in_bytes) bind(C, name = "stbi_write_png")
+       subroutine image_free(pixels) bind(C, name = "stbi_image_free")
+            import :: c_ptr
+
+            type(c_ptr), value :: pixels
+        end subroutine
+        
+        function stbi_write_png(filename, w, h, comp, pixels, stride_in_bytes) bind(C, name = "stbi_write_png")
             import :: c_ptr, c_int, c_char
 
             character(kind = c_char), intent(in) :: filename(*)
             integer(c_int), value :: w, h, comp
-            type(c_ptr), value :: data
+            type(c_ptr), value :: pixels
             integer(c_int), value :: stride_in_bytes
             
-            integer(c_int) :: stb_write_png
+            integer(c_int) :: stbi_write_png
         end function
 
     end interface
 
     contains
-        subroutine write_png(filename, w, h, comp, data, stride, success)
+        subroutine write_png(filename, w, h, comp, pixels, stride, success)
             character(*), intent(in) :: filename
             integer, intent(in) :: w, h, comp, stride
-            type(c_ptr), intent(in) :: data
+            type(c_ptr), intent(in) :: pixels
             logical, intent(out) :: success
 
-            success = stb_write_png(filename//c_null_char, w, h, comp, data, stride) /= 0
+            success = stbi_write_png(filename//c_null_char, w, h, comp, pixels, stride) /= 0
         end subroutine
 
 end module stb_bindings
