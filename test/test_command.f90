@@ -24,7 +24,16 @@ contains
             new_unittest("image_dup", test_image_dup), &
             new_unittest("image_drop", test_image_drop), &
             new_unittest("image_swap", test_image_swap), &
-            new_unittest("image_over", test_image_over) &
+            new_unittest("image_over", test_image_over), &
+            new_unittest("cmd_transpose", test_cmd_transpose), &
+            new_unittest("cmd_fliph", test_cmd_fliph), &
+            new_unittest("cmd_flipv", test_cmd_flipv), &
+            new_unittest("cmd_transform_identity", test_cmd_transform_identity), &
+            new_unittest("cmd_transform_rotate", test_cmd_transform_rotate), &
+            new_unittest("cmd_split_rgb", test_cmd_split_rgb), &
+            new_unittest("cmd_split_greyscale_noop", test_cmd_split_greyscale_noop), &
+            new_unittest("cmd_merge_rgb", test_cmd_merge_rgb), &
+            new_unittest("cmd_split_merge_roundtrip", test_cmd_split_merge_roundtrip) &
         ]
     end subroutine
 
@@ -257,6 +266,221 @@ contains
         call check(error, size(r2, 1) == 1, "middle should be 1-channel (b)")
         if (allocated(error)) return
         call check(error, size(r3, 1) == 3, "bottom should be 3-channel (a)")
+    end subroutine
+
+
+    subroutine test_cmd_transpose(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(1, 4, 3))  ! 4 wide, 3 tall
+        img = 0.0
+        img(1, 2, 1) = 1.0  ! mark position
+
+        call push_image(img)
+        call transpose()
+        result = pop_image()
+
+        call check(error, size(result, 2) == 3, "width should be old height")
+        if (allocated(error)) return
+        call check(error, size(result, 3) == 4, "height should be old width")
+        if (allocated(error)) return
+        call check(error, result(1, 1, 2) > 0.9, "pixel should move to transposed position")
+    end subroutine
+
+
+    subroutine test_cmd_fliph(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(1, 3, 2))
+        img(1, 1, :) = 0.1
+        img(1, 2, :) = 0.5
+        img(1, 3, :) = 0.9
+
+        call push_image(img)
+        call fliph()
+        result = pop_image()
+
+        call check(error, all(abs(result(1, 1, :) - 0.9) < 1.0e-6), "left should be old right")
+        if (allocated(error)) return
+        call check(error, all(abs(result(1, 3, :) - 0.1) < 1.0e-6), "right should be old left")
+    end subroutine
+
+
+    subroutine test_cmd_flipv(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(1, 2, 3))
+        img(1, :, 1) = 0.1
+        img(1, :, 2) = 0.5
+        img(1, :, 3) = 0.9
+
+        call push_image(img)
+        call flipv()
+        result = pop_image()
+
+        call check(error, all(abs(result(1, :, 1) - 0.9) < 1.0e-6), "top should be old bottom")
+        if (allocated(error)) return
+        call check(error, all(abs(result(1, :, 3) - 0.1) < 1.0e-6), "bottom should be old top")
+    end subroutine
+
+
+    ! transform with identity: cx cy 0.0 1.0 1.0 0.0 0.0
+    subroutine test_cmd_transform_identity(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+        integer :: x, y
+
+        allocate(img(1, 5, 5))
+        do x = 1, 5
+            do y = 1, 5
+                img(1, x, y) = real(x * 10 + y) / 100.0
+            end do
+        end do
+
+        call push_image(img)
+        ! push: cx cy angle sx sy tx ty
+        call push_number(3.0)   ! cx
+        call push_number(3.0)   ! cy
+        call push_number(0.0)   ! angle
+        call push_number(1.0)   ! sx
+        call push_number(1.0)   ! sy
+        call push_number(0.0)   ! tx
+        call push_number(0.0)   ! ty
+        call transform()
+        result = pop_image()
+
+        call check(error, all(abs(result - img) < 1.0e-5), "identity transform should preserve image")
+    end subroutine
+
+
+    ! transform with 180 degree rotation
+    subroutine test_cmd_transform_rotate(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(1, 5, 5))
+        img = 0.0
+        img(1, 2, 2) = 1.0  ! off-center pixel
+
+        call push_image(img)
+        ! push: cx cy angle sx sy tx ty
+        call push_number(3.0)     ! cx (center)
+        call push_number(3.0)     ! cy (center)
+        call push_number(180.0)   ! angle
+        call push_number(1.0)     ! sx
+        call push_number(1.0)     ! sy
+        call push_number(0.0)     ! tx
+        call push_number(0.0)     ! ty
+        call transform()
+        result = pop_image()
+
+        ! pixel at (2,2) should rotate to (4,4)
+        call check(error, result(1, 4, 4) > 0.5, "pixel should rotate to opposite corner")
+        if (allocated(error)) return
+        call check(error, result(1, 2, 2) < 0.1, "original position should be empty")
+    end subroutine
+
+
+    subroutine test_cmd_split_rgb(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), r(:,:,:), g(:,:,:), b(:,:,:)
+
+        allocate(img(3, 4, 4))
+        img(1,:,:) = 0.2  ! red
+        img(2,:,:) = 0.5  ! green
+        img(3,:,:) = 0.8  ! blue
+
+        call push_image(img)
+        call split()
+
+        b = pop_image()
+        g = pop_image()
+        r = pop_image()
+
+        call check(error, size(r, 1) == 1, "red should be 1 channel")
+        if (allocated(error)) return
+        call check(error, size(g, 1) == 1, "green should be 1 channel")
+        if (allocated(error)) return
+        call check(error, size(b, 1) == 1, "blue should be 1 channel")
+        if (allocated(error)) return
+        call check(error, all(abs(r(1,:,:) - 0.2) < 1.0e-6), "red values wrong")
+        if (allocated(error)) return
+        call check(error, all(abs(g(1,:,:) - 0.5) < 1.0e-6), "green values wrong")
+        if (allocated(error)) return
+        call check(error, all(abs(b(1,:,:) - 0.8) < 1.0e-6), "blue values wrong")
+    end subroutine
+
+
+    subroutine test_cmd_split_greyscale_noop(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(1, 3, 3))
+        img = 0.5
+
+        call push_image(img)
+        call split()
+
+        result = pop_image()
+
+        call check(error, size(result, 1) == 1, "should still be 1 channel")
+        if (allocated(error)) return
+        call check(error, all(abs(result - img) < 1.0e-6), "should be unchanged")
+    end subroutine
+
+
+    subroutine test_cmd_merge_rgb(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: r(:,:,:), g(:,:,:), b(:,:,:), result(:,:,:)
+
+        allocate(r(1, 3, 3), g(1, 3, 3), b(1, 3, 3))
+        r = 0.1
+        g = 0.5
+        b = 0.9
+
+        call push_image(r)
+        call push_image(g)
+        call push_image(b)
+        call push_number(3.0)
+        call merge()
+
+        result = pop_image()
+
+        call check(error, size(result, 1) == 3, "should be 3 channels")
+        if (allocated(error)) return
+        call check(error, all(abs(result(1,:,:) - 0.1) < 1.0e-6), "red channel wrong")
+        if (allocated(error)) return
+        call check(error, all(abs(result(2,:,:) - 0.5) < 1.0e-6), "green channel wrong")
+        if (allocated(error)) return
+        call check(error, all(abs(result(3,:,:) - 0.9) < 1.0e-6), "blue channel wrong")
+    end subroutine
+
+
+    subroutine test_cmd_split_merge_roundtrip(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+        integer :: c, x, y
+
+        allocate(img(3, 5, 5))
+        do c = 1, 3
+            do x = 1, 5
+                do y = 1, 5
+                    img(c, x, y) = real(c * 100 + x * 10 + y) / 1000.0
+                end do
+            end do
+        end do
+
+        call push_image(img)
+        call split()
+        call push_number(3.0)
+        call merge()
+
+        result = pop_image()
+
+        call check(error, all(abs(result - img) < 1.0e-6), "roundtrip should preserve image")
     end subroutine
 
 end module test_command

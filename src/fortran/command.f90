@@ -1,4 +1,6 @@
 module command
+    use :: image
+
     implicit none
     
     integer, parameter :: MAX_STACK = 100
@@ -108,4 +110,133 @@ module command
             call push_image(pixels1)
             call push_image(pixels2)
         end subroutine over_image
+
+        ! ---------- Image manipulation words ----------
+        subroutine load() 
+            character(MAX_STRING_LENGTH) :: filename
+            real, allocatable :: pixels(:,:,:)
+
+            filename = pop_string()
+            pixels = load_image(filename)
+            call push_image(pixels)
+        end subroutine
+
+        subroutine save() 
+            character(MAX_STRING_LENGTH) :: filename
+            real, allocatable :: pixels(:,:,:)
+            logical :: success
+
+            filename = pop_string()
+            pixels = pop_image()
+            
+            call save_image(filename, pixels, success)
+            if (.not. success) error stop "failed to save image"
+        end subroutine
+
+        subroutine transpose()
+            real, allocatable :: pixels(:,:,:), transposed_image(:,:,:)
+
+            pixels = pop_image()
+            transposed_image = transpose_image(pixels)
+            call push_image(transposed_image)
+        end subroutine
+
+        subroutine fliph()
+            real, allocatable :: pixels(:,:,:), flipped_image(:,:,:)
+
+            pixels = pop_image()
+            flipped_image = flip_image_horizontal(pixels)
+            call push_image(flipped_image)
+        end subroutine
+
+        subroutine flipv()
+            real, allocatable :: pixels(:,:,:), flipped_image(:,:,:)
+
+            pixels = pop_image()
+            flipped_image = flip_image_vertical(pixels)
+            call push_image(flipped_image)
+        end subroutine
+
+        subroutine transform()
+            real, allocatable :: pixels(:,:,:), transformed_pixels(:,:,:)
+            real :: cx, cy
+            real :: angle 
+            real :: sx, sy
+            real :: tx, ty
+            real :: rot(3,3), trans(3,3), scale(3,3), M(3,3)
+
+            ty = pop_number()
+            tx = pop_number()
+            sy = pop_number()
+            sx = pop_number()
+            angle = pop_number()
+            cy = pop_number()
+            cx = pop_number()
+
+            pixels = pop_image()
+            
+            rot = rotation_matrix(cx, cy, angle)
+            trans = translation_matrix(tx, ty)
+            scale = scale_matrix(cx, cy, sx, sy)
+            M = matmul(trans, matmul(rot, scale))
+
+            transformed_pixels = affine_transform(pixels, M)
+            call push_image(transformed_pixels)
+        end subroutine
+
+        subroutine split()
+            real, allocatable :: pixels(:,:,:)
+
+            pixels = pop_image()
+            if (size(pixels, 1) == 1) then
+                call push_image(pixels)
+                return
+            end if
+
+            call push_image(pixels(1:1,:,:))
+            call push_image(pixels(2:2,:,:))
+            call push_image(pixels(3:3,:,:))
+            if (size(pixels, 1) == 4) call push_image(pixels(4:4,:,:))
+        end subroutine
+
+        subroutine merge()
+            integer :: num_channels
+            real, allocatable :: pixels(:,:,:)
+            real, allocatable :: red(:,:,:), green(:,:,:), blue(:,:,:), alpha(:,:,:)
+
+            num_channels = int(pop_number())
+            if (.not. any(num_channels == [1, 3, 4])) &
+                error stop "failed to merge: number of channels must be 1, 3, or 4"
+
+            if (num_channels == 1) return
+
+            if (num_channels == 4) then
+                alpha = pop_image()
+                if (size(alpha, 1) /= 1) error stop "failed to merge: alpha not greyscale"
+            end if
+            blue = pop_image()
+            green = pop_image()
+            red = pop_image()
+
+            if (size(red, 1) /= 1 .or. size(green, 1) /= 1 .or. size(blue, 1) /= 1) &
+                error stop "failed to merge: component images not all greyscale"
+
+            if (any(shape(red) /= shape(green)) .or. any(shape(red) /= shape(blue))) &
+                error stop "failed to merge: dimensions mismatch"
+
+            if (num_channels == 4 .and. any(shape(red) /= shape(alpha))) &
+                error stop "failed to merge: alpha dimensions mismatch"
+
+            allocate(pixels(num_channels, size(red, 2), size(red, 3)))
+            pixels(1,:,:) = red(1,:,:)
+            pixels(2,:,:) = green(1,:,:)
+            pixels(3,:,:) = blue(1,:,:)
+            if (num_channels == 4) pixels(4,:,:) = alpha(1,:,:)
+
+            call push_image(pixels)
+        end subroutine
+
+
+
+
 end module
