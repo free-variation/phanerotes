@@ -2,6 +2,7 @@ program tester
     use, intrinsic :: iso_fortran_env, only: error_unit
     use testdrive, only: run_testsuite, new_testsuite, testsuite_type
     use test_command, only: collect_command_tests
+    use test_image, only: collect_image_tests
     implicit none
 
     integer :: stat, is
@@ -11,7 +12,8 @@ program tester
     stat = 0
 
     testsuites = [ &
-        new_testsuite("command", collect_command_tests) &
+        new_testsuite("command", collect_command_tests), &
+        new_testsuite("image", collect_image_tests) &
     ]
 
     do is = 1, size(testsuites)
