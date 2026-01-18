@@ -19,15 +19,14 @@ module stb_bindings
             type(c_ptr), value :: pixels_c_ptr
         end subroutine
         
-        function stbi_write_png(filename, w, h, comp, pixels, stride_in_bytes) bind(C, name = "stbi_write_png")
+        function stbi_write_bmp(filename, w, h, comp, pixels) bind(C, name = "stbi_write_bmp")
             import :: c_ptr, c_int, c_char
 
             character(kind = c_char), intent(in) :: filename(*)
             integer(c_int), value :: w, h, comp
             type(c_ptr), value :: pixels
-            integer(c_int), value :: stride_in_bytes
             
-            integer(c_int) :: stbi_write_png
+            integer(c_int) :: stbi_write_bmp
         end function
 
     end interface

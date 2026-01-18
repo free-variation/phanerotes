@@ -17,7 +17,11 @@ module image
             integer(c_int) :: width, height, channels
             integer(c_int8_t), pointer :: flat_pixels(:)
 
-            pixels_c_ptr = stbi_load(filename // c_null_char, width, height, channels, 0)
+            pixels_c_ptr = stbi_load(trim(filename) // c_null_char, width, height, channels, 0)
+            if (.not. c_associated(pixels_c_ptr)) then
+                print *, "failed to load image: ", trim(filename)
+                error stop
+            end if
             call c_f_pointer(pixels_c_ptr, flat_pixels, [width * height * channels])
 
             allocate(pixels(channels, width, height))
@@ -41,8 +45,8 @@ module image
             allocate(flat_pixels(channels * width * height))
             flat_pixels = reshape(int(pixels * 255.0, c_int8_t), [channels * width * height])
 
-            success = stbi_write_png(filename // c_null_char, width, height, channels, &
-                                    c_loc(flat_pixels), width * channels) /= 0
+            success = stbi_write_bmp(trim(filename) // c_null_char, width, height, channels, &
+                                    c_loc(flat_pixels)) /= 0
 
             deallocate(flat_pixels)
         end subroutine

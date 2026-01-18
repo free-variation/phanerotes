@@ -186,9 +186,14 @@ module command
 
         subroutine split()
             real, allocatable :: pixels(:,:,:)
+            integer :: num_channels
 
             pixels = pop_image()
-            if (size(pixels, 1) == 1) then
+            num_channels = size(pixels, 1)
+            call push_number(real(num_channels))
+
+            ! a greyscale image can be pushed right back as is
+            if (num_channels == 1) then
                 call push_image(pixels)
                 return
             end if
@@ -196,7 +201,10 @@ module command
             call push_image(pixels(1:1,:,:))
             call push_image(pixels(2:2,:,:))
             call push_image(pixels(3:3,:,:))
-            if (size(pixels, 1) == 4) call push_image(pixels(4:4,:,:))
+
+            ! check for alpha channel
+            if (num_channels == 4) call push_image(pixels(4:4,:,:))
+
         end subroutine
 
         subroutine merge()
