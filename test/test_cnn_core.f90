@@ -66,6 +66,9 @@ program test_cnn_core
     ! weights io tests
     call test_save_load_weights()
 
+    ! training test
+    call test_training_loss_decreases()
+
 contains
 
     subroutine test_im2col_basic()
@@ -1559,6 +1562,80 @@ contains
         close(99, status="delete")
 
         print *, "PASS: save_load_weights"
+    end subroutine
+
+    subroutine test_training_loss_decreases()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+        real, allocatable :: images(:,:,:,:)
+        real, allocatable :: latent(:,:,:), output(:,:,:)
+        real :: loss_before, loss_after
+        real :: lr
+        integer :: epoch, i, j, k
+        real, allocatable :: grad_loss(:,:,:)
+
+        config%input_channels = 1
+        config%num_layers = 2
+        config%base_channels = 8
+        config%max_channels = 32
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+
+        net = autoencoder_init(config)
+
+        ! Create small synthetic dataset: 4 images, 1 channel, 16x16
+        ! Use structured patterns (gradients) instead of random noise
+        allocate(images(4, 1, 16, 16))
+        do i = 1, 4
+            do j = 1, 16
+                do k = 1, 16
+                    ! Different gradient patterns for each image
+                    if (i == 1) images(i, 1, j, k) = real(j) / 16.0
+                    if (i == 2) images(i, 1, j, k) = real(k) / 16.0
+                    if (i == 3) images(i, 1, j, k) = real(j + k) / 32.0
+                    if (i == 4) images(i, 1, j, k) = real(abs(j - k)) / 16.0
+                end do
+            end do
+        end do
+
+        ! Compute loss before training
+        loss_before = 0.0
+        do i = 1, 4
+            call autoencoder_forward(net, images(i,:,:,:), latent, output)
+            loss_before = loss_before + mse_loss(output, images(i,:,:,:))
+        end do
+        loss_before = loss_before / 4.0
+
+        ! Train for a few epochs
+        lr = 0.1
+        do epoch = 1, 100
+            do i = 1, 4
+                call autoencoder_forward(net, images(i,:,:,:), latent, output)
+                grad_loss = mse_loss_grad(output, images(i,:,:,:))
+                call autoencoder_backward(net, output, grad_loss)
+                call sgd_update_all(net, lr)
+            end do
+        end do
+
+        ! Compute loss after training
+        loss_after = 0.0
+        do i = 1, 4
+            call autoencoder_forward(net, images(i,:,:,:), latent, output)
+            loss_after = loss_after + mse_loss(output, images(i,:,:,:))
+        end do
+        loss_after = loss_after / 4.0
+
+        print *, "  loss before:", loss_before
+        print *, "  loss after: ", loss_after
+
+        if (loss_after >= loss_before) then
+            print *, "FAIL test_training_loss_decreases: loss did not decrease"
+            error stop
+        end if
+
+        print *, "PASS: training loss decreases"
     end subroutine
 
 end program
