@@ -2,6 +2,7 @@ program test_cnn_core
     use cnn_core
     use nn
     use cnn_autoencoder
+    use train
     implicit none
 
     ! im2col tests
@@ -54,6 +55,16 @@ program test_cnn_core
 
     ! autoencoder backward tests
     call test_autoencoder_backward_numerical()
+
+    ! loss function tests
+    call test_mse_loss()
+    call test_mse_loss_grad()
+
+    ! sgd tests
+    call test_sgd_update()
+
+    ! weights io tests
+    call test_save_load_weights()
 
 contains
 
@@ -1366,6 +1377,188 @@ contains
         end if
 
         print *, "PASS: autoencoder_backward numerical (max err:", max_err, ")"
+    end subroutine
+
+    subroutine test_mse_loss()
+        real :: output(1, 2, 2), target(1, 2, 2)
+        real :: loss, expected
+
+        ! Test 1: identical output and target -> loss = 0
+        output = 1.0
+        target = 1.0
+        loss = mse_loss(output, target)
+        if (abs(loss) > 1e-6) then
+            print *, "FAIL mse_loss: expected 0 for identical, got", loss
+            error stop
+        end if
+
+        ! Test 2: known values
+        ! output = [1, 2, 3, 4], target = [0, 0, 0, 0]
+        ! errors = [1, 2, 3, 4], squared = [1, 4, 9, 16], sum = 30
+        ! mse = 30 / 4 = 7.5
+        output(1, :, :) = reshape([1.0, 2.0, 3.0, 4.0], [2, 2])
+        target = 0.0
+        loss = mse_loss(output, target)
+        expected = 30.0 / 4.0
+        if (abs(loss - expected) > 1e-6) then
+            print *, "FAIL mse_loss: expected", expected, "got", loss
+            error stop
+        end if
+
+        ! Test 3: different known values
+        ! output = [2, 2, 2, 2], target = [1, 1, 1, 1]
+        ! errors = [1, 1, 1, 1], squared = [1, 1, 1, 1], sum = 4
+        ! mse = 4 / 4 = 1.0
+        output = 2.0
+        target = 1.0
+        loss = mse_loss(output, target)
+        if (abs(loss - 1.0) > 1e-6) then
+            print *, "FAIL mse_loss: expected 1.0, got", loss
+            error stop
+        end if
+
+        print *, "PASS: mse_loss"
+    end subroutine
+
+    subroutine test_mse_loss_grad()
+        real :: output(1, 2, 2), target(1, 2, 2)
+        real, allocatable :: grad(:,:,:)
+        real :: expected_grad
+
+        ! Test 1: identical -> gradient = 0
+        output = 1.0
+        target = 1.0
+        grad = mse_loss_grad(output, target)
+        if (maxval(abs(grad)) > 1e-6) then
+            print *, "FAIL mse_loss_grad: expected 0 for identical"
+            error stop
+        end if
+
+        ! Test 2: correct shape
+        if (size(grad, 1) /= 1 .or. size(grad, 2) /= 2 .or. size(grad, 3) /= 2) then
+            print *, "FAIL mse_loss_grad: wrong shape"
+            error stop
+        end if
+
+        ! Test 3: known values
+        ! output = [2, 2, 2, 2], target = [1, 1, 1, 1]
+        ! grad = 2 * (output - target) / n = 2 * 1 / 4 = 0.5
+        output = 2.0
+        target = 1.0
+        grad = mse_loss_grad(output, target)
+        expected_grad = 2.0 * 1.0 / 4.0
+        if (maxval(abs(grad - expected_grad)) > 1e-6) then
+            print *, "FAIL mse_loss_grad: expected", expected_grad, "got", grad(1,1,1)
+            error stop
+        end if
+
+        ! Test 4: varying values
+        ! output = [0, 1, 2, 3], target = [1, 1, 1, 1]
+        ! diff = [-1, 0, 1, 2]
+        ! grad = 2 * diff / 4 = [-0.5, 0, 0.5, 1.0]
+        output(1, :, :) = reshape([0.0, 1.0, 2.0, 3.0], [2, 2])
+        target = 1.0
+        grad = mse_loss_grad(output, target)
+        if (abs(grad(1,1,1) - (-0.5)) > 1e-6 .or. &
+            abs(grad(1,2,1) - 0.0) > 1e-6 .or. &
+            abs(grad(1,1,2) - 0.5) > 1e-6 .or. &
+            abs(grad(1,2,2) - 1.0) > 1e-6) then
+            print *, "FAIL mse_loss_grad: wrong gradient values"
+            error stop
+        end if
+
+        print *, "PASS: mse_loss_grad"
+    end subroutine
+
+    subroutine test_sgd_update()
+        type(conv_layer) :: layer
+        real :: lr, expected_weight, expected_bias
+
+        ! Create a simple layer
+        layer%in_channels = 1
+        layer%out_channels = 1
+        layer%kernel_width = 2
+        layer%kernel_height = 2
+        layer%stride = 1
+        layer%padding = 0
+
+        allocate(layer%weights(1, 1, 2, 2))
+        allocate(layer%bias(1))
+        allocate(layer%weights_grad(1, 1, 2, 2))
+        allocate(layer%bias_grad(1))
+
+        ! Set known values
+        layer%weights = 1.0
+        layer%bias = 0.5
+        layer%weights_grad = 0.1
+        layer%bias_grad = 0.2
+
+        lr = 0.5
+
+        ! Update: weights = weights - lr * grad
+        ! expected: 1.0 - 0.5 * 0.1 = 0.95
+        ! bias: 0.5 - 0.5 * 0.2 = 0.4
+        call sgd_update(layer, lr)
+
+        expected_weight = 1.0 - 0.5 * 0.1
+        expected_bias = 0.5 - 0.5 * 0.2
+
+        if (maxval(abs(layer%weights - expected_weight)) > 1e-6) then
+            print *, "FAIL sgd_update: weights wrong, expected", expected_weight, "got", layer%weights(1,1,1,1)
+            error stop
+        end if
+
+        if (abs(layer%bias(1) - expected_bias) > 1e-6) then
+            print *, "FAIL sgd_update: bias wrong, expected", expected_bias, "got", layer%bias(1)
+            error stop
+        end if
+
+        print *, "PASS: sgd_update"
+    end subroutine
+
+    subroutine test_save_load_weights()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net1, net2
+        character(len=*), parameter :: filename = "test_weights.bin"
+        integer :: i
+        real :: max_err
+
+        config%input_channels = 1
+        config%num_layers = 2
+        config%base_channels = 8
+        config%max_channels = 32
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+
+        ! Create and save
+        net1 = autoencoder_init(config)
+        call save_weights(net1, filename)
+
+        ! Create new net and load
+        net2 = autoencoder_init(config)
+        call load_weights(net2, filename)
+
+        ! Verify weights match
+        max_err = 0.0
+        do i = 1, config%num_layers
+            max_err = max(max_err, maxval(abs(net1%encoder(i)%weights - net2%encoder(i)%weights)))
+            max_err = max(max_err, maxval(abs(net1%encoder(i)%bias - net2%encoder(i)%bias)))
+            max_err = max(max_err, maxval(abs(net1%decoder(i)%weights - net2%decoder(i)%weights)))
+            max_err = max(max_err, maxval(abs(net1%decoder(i)%bias - net2%decoder(i)%bias)))
+        end do
+
+        if (max_err > 1e-10) then
+            print *, "FAIL save_load_weights: weights don't match, max_err =", max_err
+            error stop
+        end if
+
+        ! Clean up test file
+        open(unit=99, file=filename, status="old")
+        close(99, status="delete")
+
+        print *, "PASS: save_load_weights"
     end subroutine
 
 end program

@@ -147,4 +147,40 @@ module cnn_autoencoder
             end do
         end subroutine
 
+        subroutine save_weights(net, filename)
+            type(autoencoder), intent(in) :: net
+            character(*), intent(in) :: filename
+
+            integer :: i, unit
+
+            open(newunit=unit, file = filename, form = "unformatted", access = "stream")
+            do i = 1, net%config%num_layers
+                write(unit) net%encoder(i)%weights
+                write(unit) net%encoder(i)%bias
+
+                write(unit) net%decoder(i)%weights
+                write(unit) net%decoder(i)%bias
+            end do
+
+            close(unit)
+        end subroutine
+
+        subroutine load_weights(net, filename)
+            type(autoencoder), intent(inout) :: net
+            character(*), intent(in) :: filename
+
+            integer :: i, unit
+
+            open(newunit=unit, file=filename, form="unformatted", access="stream", status="old")
+            do i = 1, net%config%num_layers
+                read(unit) net%encoder(i)%weights
+                read(unit) net%encoder(i)%bias
+
+                read(unit) net%decoder(i)%weights
+                read(unit) net%decoder(i)%bias
+            end do
+
+            close(unit)
+        end subroutine
+
 end module
