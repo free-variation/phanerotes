@@ -15,10 +15,17 @@ module cnn_autoencoder
         integer :: padding          ! typically 1 for 3x3 kernel
     end type
 
+    type :: activation_cache
+        real, allocatable :: pre_relu(:,:,:)
+    end type
+
     type :: autoencoder
         type(autoencoder_config) :: config
         type(conv_layer), allocatable :: encoder(:)
         type(conv_layer), allocatable :: decoder(:)
+
+        type(activation_cache), allocatable :: encoder_cache(:)
+        type(activation_cache), allocatable :: decoder_cache(:)
     end type
 
     contains
@@ -60,6 +67,8 @@ module cnn_autoencoder
 
             allocate(net%encoder(config%num_layers))
             allocate(net%decoder(config%num_layers))
+            allocate(net%encoder_cache(config%num_layers))
+            allocate(net%decoder_cache(config%num_layers))
 
             do i = 1, config%num_layers
                 if (i == 1) then
@@ -92,6 +101,7 @@ module cnn_autoencoder
             layer_input = input
             do i = 1, net%config%num_layers
                 call conv_forward(net%encoder(i), layer_input, layer_output)
+                net%encoder_cache(i)%pre_relu = layer_output
                 layer_output = relu_forward(layer_output)
 
                 layer_input = layer_output
@@ -102,6 +112,7 @@ module cnn_autoencoder
             do i = 1, net%config%num_layers - 1
                 layer_input = upsample(layer_input, net%config%stride)
                 call conv_forward(net%decoder(i), layer_input, layer_output)
+                net%decoder_cache(i)%pre_relu = layer_output
                 layer_output = relu_forward(layer_output)
 
                 layer_input = layer_output
@@ -110,6 +121,30 @@ module cnn_autoencoder
             layer_input = upsample(layer_input, net%config%stride)
             call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
             output = sigmoid_forward(output)
+        end subroutine
+
+        subroutine autoencoder_backward(net, output, grad_loss) 
+            type(autoencoder), intent(inout) :: net
+            real, intent(in) :: output(:,:,:)
+            real, intent(in) :: grad_loss(:,:,:)
+            
+            real, allocatable :: grad_input(:,:,:), grad_output(:,:,:)
+            integer :: i
+
+            grad_output = sigmoid_backward(output, grad_loss)
+            call conv_backward(net%decoder(net%config%num_layers), grad_output, grad_input)
+            do i = net%config%num_layers - 1, 1, -1
+                grad_output = upsample_backward(grad_input, net%config%stride)
+                grad_output = relu_backward(net%decoder_cache(i)%pre_relu, grad_output)
+                call conv_backward(net%decoder(i), grad_output, grad_input)
+            end do
+
+            grad_input = upsample_backward(grad_input, net%config%stride)
+
+            do i = net%config%num_layers, 1, -1
+                grad_output = relu_backward(net%encoder_cache(i)%pre_relu, grad_input)
+                call conv_backward(net%encoder(i), grad_output, grad_input)
+            end do
         end subroutine
 
 end module

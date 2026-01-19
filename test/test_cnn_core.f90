@@ -52,6 +52,9 @@ program test_cnn_core
     call test_autoencoder_forward_dimensions()
     call test_autoencoder_forward_output_range()
 
+    ! autoencoder backward tests
+    call test_autoencoder_backward_numerical()
+
 contains
 
     subroutine test_im2col_basic()
@@ -1254,6 +1257,115 @@ contains
         end if
 
         print *, "PASS: autoencoder_forward output range"
+    end subroutine
+
+    subroutine test_autoencoder_backward_numerical()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+        real, allocatable :: input(:,:,:), target(:,:,:)
+        real, allocatable :: latent(:,:,:), output(:,:,:)
+        real, allocatable :: output_plus(:,:,:), output_minus(:,:,:)
+        real, allocatable :: latent_tmp(:,:,:)
+        real, allocatable :: grad_loss(:,:,:)
+        real :: eps, loss, loss_plus, loss_minus
+        real :: numerical_grad, analytical_grad, max_err
+        real :: original_weight
+        integer :: layer_idx, oc, ic, ki, kj
+
+        eps = 1e-3
+        max_err = 0.0
+
+        ! Small network for fast test
+        config%input_channels = 1
+        config%num_layers = 2
+        config%base_channels = 8
+        config%max_channels = 32
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+
+        net = autoencoder_init(config)
+
+        ! Small input
+        allocate(input(1, 8, 8))
+        allocate(target(1, 8, 8))
+        call random_number(input)
+        call random_number(target)
+
+        ! Forward pass
+        call autoencoder_forward(net, input, latent, output)
+
+        ! MSE loss gradient: d(loss)/d(output) = 2*(output - target)/n
+        allocate(grad_loss, mold=output)
+        grad_loss = 2.0 * (output - target) / size(output)
+
+        ! Backward pass
+        call autoencoder_backward(net, output, grad_loss)
+
+        ! Check encoder weight gradients numerically
+        layer_idx = 1
+        do oc = 1, min(2, net%encoder(layer_idx)%out_channels)
+            do ic = 1, net%encoder(layer_idx)%in_channels
+                do ki = 1, 2
+                    do kj = 1, 2
+                        original_weight = net%encoder(layer_idx)%weights(oc, ic, ki, kj)
+
+                        ! f(w + eps)
+                        net%encoder(layer_idx)%weights(oc, ic, ki, kj) = original_weight + eps
+                        call autoencoder_forward(net, input, latent_tmp, output_plus)
+                        loss_plus = sum((output_plus - target)**2) / size(output_plus)
+
+                        ! f(w - eps)
+                        net%encoder(layer_idx)%weights(oc, ic, ki, kj) = original_weight - eps
+                        call autoencoder_forward(net, input, latent_tmp, output_minus)
+                        loss_minus = sum((output_minus - target)**2) / size(output_minus)
+
+                        ! Restore
+                        net%encoder(layer_idx)%weights(oc, ic, ki, kj) = original_weight
+
+                        numerical_grad = (loss_plus - loss_minus) / (2.0 * eps)
+                        analytical_grad = net%encoder(layer_idx)%weights_grad(oc, ic, ki, kj)
+
+                        max_err = max(max_err, abs(numerical_grad - analytical_grad))
+                    end do
+                end do
+            end do
+        end do
+
+        ! Check decoder weight gradients numerically
+        layer_idx = 1
+        do oc = 1, min(2, net%decoder(layer_idx)%out_channels)
+            do ic = 1, min(2, net%decoder(layer_idx)%in_channels)
+                do ki = 1, 2
+                    do kj = 1, 2
+                        original_weight = net%decoder(layer_idx)%weights(oc, ic, ki, kj)
+
+                        net%decoder(layer_idx)%weights(oc, ic, ki, kj) = original_weight + eps
+                        call autoencoder_forward(net, input, latent_tmp, output_plus)
+                        loss_plus = sum((output_plus - target)**2) / size(output_plus)
+
+                        net%decoder(layer_idx)%weights(oc, ic, ki, kj) = original_weight - eps
+                        call autoencoder_forward(net, input, latent_tmp, output_minus)
+                        loss_minus = sum((output_minus - target)**2) / size(output_minus)
+
+                        net%decoder(layer_idx)%weights(oc, ic, ki, kj) = original_weight
+
+                        numerical_grad = (loss_plus - loss_minus) / (2.0 * eps)
+                        analytical_grad = net%decoder(layer_idx)%weights_grad(oc, ic, ki, kj)
+
+                        max_err = max(max_err, abs(numerical_grad - analytical_grad))
+                    end do
+                end do
+            end do
+        end do
+
+        if (max_err > 1e-2) then
+            print *, "FAIL autoencoder_backward_numerical: max error =", max_err
+            error stop
+        end if
+
+        print *, "PASS: autoencoder_backward numerical (max err:", max_err, ")"
     end subroutine
 
 end program
