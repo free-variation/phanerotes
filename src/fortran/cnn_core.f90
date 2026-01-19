@@ -1,6 +1,31 @@
 module cnn_core
     implicit none
 
+    interface
+        subroutine sgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)
+            character :: transa, transb
+            integer :: m, n, k, lda, ldb, ldc
+            real :: alpha, beta
+            real :: a(lda,*), b(ldb,*)
+            real :: c(ldc,*)
+        end subroutine
+    end interface
+
+    type :: conv_layer
+        integer :: in_channels, out_channels
+        integer :: kernel_width, kernel_height, stride, padding
+
+        real, allocatable :: weights(:,:,:,:) ! out_channels, in_channels, kernel_width, kernel_height
+        real, allocatable :: bias(:) ! out_channels
+        real, allocatable :: weights_grad(:,:,:,:)
+        real, allocatable :: bias_grad(:)
+
+        ! cached for backward pass
+        real, allocatable :: input_cache(:,:,:)
+        real, allocatable :: col_cache(:,:)
+    end type
+
+
     contains
         pure function im2col(input, kernel_width, kernel_height, stride, padding)
             real, intent(in) :: input(:,:,:)
@@ -65,4 +90,36 @@ module cnn_core
             ! strip padding
             col2im = padded(:, padding+1:padding+width, padding+1:padding+height)
             end function
+
+        subroutine conv_forward(layer, input, output) 
+            type(conv_layer), intent(inout) :: layer
+            real, intent(in) :: input(:,:,:)
+            real, allocatable, intent(out) :: output(:,:,:)
+
+            real, allocatable :: col_form(:,:)
+            real, allocatable :: W(:,:)
+            integer :: m, n, k
+            integer :: out_width, out_height
+            real, allocatable :: output_matrix(:,:)
+
+            col_form = im2col(input, layer%kernel_width, layer%kernel_height, layer%stride, layer%padding)
+            W = reshape(layer%weights, [layer%out_channels, layer%in_channels * layer%kernel_width * layer%kernel_height])
+            m = layer%out_channels
+            k = layer%in_channels * layer%kernel_width * layer%kernel_height
+            n = size(col_form, 2)
+
+            allocate(output_matrix(layer%out_channels, size(col_form, 2)))
+            
+            call sgemm("N", "N", m, n, k, 1.0, W, m, col_form, k, 0.0, output_matrix, m)
+            
+            out_width =  (size(input, 2) + 2*layer%padding - layer%kernel_width) / layer%stride + 1
+            out_height = (size(input, 3) + 2*layer%padding - layer%kernel_height) / layer%stride + 1
+            output_matrix = output_matrix + spread(layer%bias, 2, n)
+
+            output = reshape(output_matrix, [layer%out_channels, out_width, out_height])
+            
+            layer%input_cache = input
+            layer%col_cache = col_form
+
+        end subroutine
  end module
