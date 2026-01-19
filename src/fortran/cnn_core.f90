@@ -91,7 +91,10 @@ module cnn_core
             col2im = padded(:, padding+1:padding+width, padding+1:padding+height)
             end function
 
-        subroutine conv_forward(layer, input, output) 
+        subroutine conv_forward(layer, input, output)
+            ! Convolution via im2col + GEMM: instead of sliding a kernel across the image,
+            ! we extract all patches into columns (im2col), then a single matrix multiply
+            ! applies all kernels to all patches simultaneously. Much faster on modern hardware.
             type(conv_layer), intent(inout) :: layer
             real, intent(in) :: input(:,:,:)
             real, allocatable, intent(out) :: output(:,:,:)
@@ -102,24 +105,119 @@ module cnn_core
             integer :: out_width, out_height
             real, allocatable :: output_matrix(:,:)
 
+            ! im2col: each column is one flattened patch (all channels, kw*kh pixels)
+            ! Result shape: (in_channels * kw * kh, out_w * out_h)
             col_form = im2col(input, layer%kernel_width, layer%kernel_height, layer%stride, layer%padding)
+
+            ! Flatten 4D weights to 2D: each row is one output filter flattened
+            ! Shape: (out_channels, in_channels * kw * kh)
             W = reshape(layer%weights, [layer%out_channels, layer%in_channels * layer%kernel_width * layer%kernel_height])
             m = layer%out_channels
             k = layer%in_channels * layer%kernel_width * layer%kernel_height
             n = size(col_form, 2)
 
             allocate(output_matrix(layer%out_channels, size(col_form, 2)))
-            
+
+            ! Core operation: output = W @ col_form
+            ! Each column of result is one spatial position with all output channels
             call sgemm("N", "N", m, n, k, 1.0, W, m, col_form, k, 0.0, output_matrix, m)
-            
+
             out_width =  (size(input, 2) + 2*layer%padding - layer%kernel_width) / layer%stride + 1
             out_height = (size(input, 3) + 2*layer%padding - layer%kernel_height) / layer%stride + 1
+
+            ! Bias is per output channel, broadcast across all spatial positions
             output_matrix = output_matrix + spread(layer%bias, 2, n)
 
             output = reshape(output_matrix, [layer%out_channels, out_width, out_height])
-            
+
+            ! Cache for backward pass: need original input layout and its column form
             layer%input_cache = input
             layer%col_cache = col_form
 
         end subroutine
+
+        subroutine conv_backward(layer, grad_output, grad_input)
+            ! Backpropagation through convolution. Given gradient of loss w.r.t. output,
+            ! compute gradients w.r.t. weights, bias, and input (for the layer below).
+            ! The math mirrors forward: since forward was matmul, backward is also matmul.
+            type(conv_layer), intent(inout) :: layer
+            real, intent(in) :: grad_output(:,:,:)
+            real, intent(out), allocatable :: grad_input(:,:,:)
+
+            real, allocatable :: G(:,:), CG(:,:)
+            integer :: out_channels, out_width, out_height
+            real, allocatable :: W(:,:), WG(:,:)
+            integer :: k, n
+
+            out_channels = size(grad_output, 1)
+            out_width = size(grad_output, 2)
+            out_height = size(grad_output, 3)
+
+            ! Flatten grad_output to 2D, matching the shape used in forward pass
+            G = reshape(grad_output, [out_channels, out_width * out_height])
+            k = layer%in_channels * layer%kernel_width * layer%kernel_height
+            n = out_width * out_height
+            W = reshape(layer%weights, [out_channels, k])
+
+            ! Weight gradient: d(loss)/d(W) = G @ col_cache^T
+            ! Each weight connects one input patch element to one output channel.
+            ! Summing over all spatial positions gives the total gradient.
+            allocate(WG(out_channels, k))
+            call sgemm('N', 'T', out_channels, k, n, 1.0, G, out_channels, layer%col_cache, k, 0.0, WG, out_channels)
+            layer%weights_grad = reshape(WG, [out_channels, layer%in_channels, layer%kernel_width, layer%kernel_height])
+
+            ! Bias gradient: sum over spatial positions. Each output position contributes
+            ! equally to the bias gradient for its channel.
+            layer%bias_grad = sum(G, 2)
+
+            ! Input gradient: d(loss)/d(input) = W^T @ G, then col2im to scatter back.
+            ! W^T maps output gradients back to patch gradients; col2im accumulates
+            ! overlapping patches (same pixel may appear in multiple patches).
+            allocate(CG(k, n))
+            call sgemm('T', 'N', k, n, out_channels, 1.0, W, out_channels, G, out_channels, 0.0, CG, k)
+
+            grad_input = col2im(CG, layer%in_channels, &
+                size(layer%input_cache, 2), size(layer%input_cache, 3), &
+                layer%kernel_width, layer%kernel_height, &
+                layer%stride, layer%padding)
+        end subroutine
+
+        pure function upsample(input, factor)
+            real, intent(in) :: input(:, :, :)
+            integer, intent(in) :: factor
+            real, allocatable :: upsample(:, :, :)
+
+            integer :: num_channels, width, height
+            integer :: i, j, fi, fj
+
+            num_channels = size(input, 1)
+            width = size(input, 2)
+            height = size(input, 3)
+
+            allocate(upsample(num_channels, factor * width, factor * height))
+
+            do concurrent (i = 1:width, j = 1:height, fi = 1:factor, fj = 1:factor)
+                upsample(:, (i - 1)*factor + fi, (j - 1)*factor + fj) = input(:, i, j)
+            end do
+        end function
+
+        pure function upsample_backward(grad_output, factor)
+            real, intent(in) :: grad_output(:,:,:)
+            integer, intent(in) :: factor
+            real, allocatable :: upsample_backward(:,:,:)
+
+            integer :: num_channels, width, height
+            integer :: i, j, k
+
+            num_channels = size(grad_output, 1)
+            width = size(grad_output, 2) / factor
+            height = size(grad_output, 3) / factor
+
+            allocate(upsample_backward(num_channels, width, height))
+
+            do concurrent (i = 1:width, j = 1:height, k = 1:num_channels)
+                upsample_backward(k, i, j) = sum(grad_output(k, (i - 1)*factor + 1:i*factor, (j - 1)*factor + 1:j*factor))
+            end do
+        end function
  end module
+
