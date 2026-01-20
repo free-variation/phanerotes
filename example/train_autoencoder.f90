@@ -10,7 +10,9 @@ program train_autoencoder
     real, allocatable :: tiles(:,:,:,:)
     integer :: width, height, channels
     integer :: tile_size, tiles_x, tiles_y, num_tiles
-    integer :: i, j, idx
+    integer :: i, j, idx, batch_size
+
+    batch_size = 32
 
     ! Load image
     print *, "Loading image..."
@@ -50,7 +52,7 @@ program train_autoencoder
     net = autoencoder_init(config)
 
     ! Train and save weights
-    call train_network(net, tiles, 20, 0.01, "autoencoder")
+    call train_network(net, tiles, batch_size, 20, 0.01, "autoencoder")
     print *, "Training complete."
 
 end program

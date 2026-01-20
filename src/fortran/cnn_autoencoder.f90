@@ -16,7 +16,7 @@ module cnn_autoencoder
     end type
 
     type :: activation_cache
-        real, allocatable :: pre_relu(:,:,:)
+        real, allocatable :: pre_relu(:, :,:,:)
     end type
 
     type :: autoencoder
@@ -91,11 +91,11 @@ module cnn_autoencoder
 
         subroutine autoencoder_forward(net, input, latent, output) 
             type(autoencoder), intent(inout) :: net
-            real, intent(in) :: input(:,:,:)
-            real, allocatable, intent(out) :: latent(:,:,:)
-            real, allocatable, intent(out) :: output(:,:,:)
+            real, intent(in) :: input(:, :,:,:)
+            real, allocatable, intent(out) :: latent(:, :,:,:)
+            real, allocatable, intent(out) :: output(:, :,:,:)
 
-            real, allocatable :: layer_input(:,:,:), layer_output(:,:,:)
+            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
             integer :: i
 
             layer_input = input
@@ -125,10 +125,10 @@ module cnn_autoencoder
 
         subroutine autoencoder_backward(net, output, grad_loss) 
             type(autoencoder), intent(inout) :: net
-            real, intent(in) :: output(:,:,:)
-            real, intent(in) :: grad_loss(:,:,:)
+            real, intent(in) :: output(:, :,:,:)
+            real, intent(in) :: grad_loss(:, :,:,:)
             
-            real, allocatable :: grad_input(:,:,:), grad_output(:,:,:)
+            real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:)
             integer :: i
 
             grad_output = sigmoid_backward(output, grad_loss)

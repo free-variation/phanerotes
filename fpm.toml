@@ -10,9 +10,11 @@ auto-tests = true
 auto-examples = true
 module-naming = false
 link = ["blas"]
+
 [install]
 library = false
 test = false
+
 [fortran]
 implicit-typing = false
 implicit-external = false
