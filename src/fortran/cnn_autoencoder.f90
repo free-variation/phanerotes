@@ -13,6 +13,7 @@ module cnn_autoencoder
         integer :: kernel_height    ! typically 3
         integer :: stride           ! typically 2 for encoder
         integer :: padding          ! typically 1 for 3x3 kernel
+        real :: beta                ! KL regularization term
     end type
 
     type :: activation_cache
@@ -22,10 +23,17 @@ module cnn_autoencoder
     type :: autoencoder
         type(autoencoder_config) :: config
         type(conv_layer), allocatable :: encoder(:)
+
+        type(conv_layer) :: latent_mu
+        type(conv_layer) :: latent_log_var
+
         type(conv_layer), allocatable :: decoder(:)
 
         type(activation_cache), allocatable :: encoder_cache(:)
         type(activation_cache), allocatable :: decoder_cache(:)
+        real, allocatable :: cached_mu(:, :,:,:)
+        real, allocatable :: cached_log_var(:, :,:,:)
+        real, allocatable :: cached_epsilon(:, :,:,:)
     end type
 
     contains
@@ -54,6 +62,8 @@ module cnn_autoencoder
             scale = sqrt(2.0 / (layer%in_channels * layer%kernel_width * layer%kernel_height))
             call random_number(layer%weights)
             layer%weights = (layer%weights - 0.5) * 2.0 * scale
+
+            layer%training = .true.
         end subroutine
 
 
@@ -80,6 +90,10 @@ module cnn_autoencoder
                 
                 call init_layer(net%encoder(i), config, in_channels, out_channels, config%stride)
             end do
+
+            call init_layer(net%latent_mu, config, out_channels, out_channels, 1)
+            call init_layer(net%latent_log_var, config, out_channels, out_channels, 1)
+            
                 
             do i = 1, config%num_layers
                 in_channels = net%encoder(config%num_layers - i + 1)%out_channels
@@ -89,32 +103,85 @@ module cnn_autoencoder
             end do
         end function
 
-        subroutine autoencoder_forward(net, input, latent, output) 
+        subroutine set_training(net, training)
+           type(autoencoder), intent(inout) ::net
+           logical, intent(in) :: training 
+
+           integer :: i
+
+           do i = 1, net%config%num_layers
+               net%encoder(i)%training = training
+               net%decoder(i)%training = training
+           end do
+
+           net%latent_mu%training = training
+           net%latent_log_var%training = training
+           end subroutine
+
+        subroutine autoencoder_forward(net, input, latent_mu, latent_log_var, output) 
             type(autoencoder), intent(inout) :: net
             real, intent(in) :: input(:, :,:,:)
-            real, allocatable, intent(out) :: latent(:, :,:,:)
+            real, allocatable, intent(out) :: latent_mu(:, :,:,:), latent_log_var(:, :,:,:)
             real, allocatable, intent(out) :: output(:, :,:,:)
 
             real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
             integer :: i
+            real, allocatable :: z(:, :,:,:), epsilon(:, :,:,:)
 
             layer_input = input
             do i = 1, net%config%num_layers
                 call conv_forward(net%encoder(i), layer_input, layer_output)
-                net%encoder_cache(i)%pre_relu = layer_output
+                if (net%encoder(i)%training) net%encoder_cache(i)%pre_relu = layer_output
                 layer_output = relu_forward(layer_output)
 
                 layer_input = layer_output
             end do
 
-            latent = layer_output
+            call conv_forward(net%latent_mu, layer_output, latent_mu)
+            call conv_forward(net%latent_log_var, layer_output, latent_log_var)
+
+            if (net%latent_mu%training) then
+                allocate(epsilon, mold = latent_mu)
+                call random_number(epsilon)
+                epsilon = (epsilon - 0.5) * 2.0 * sqrt(2.0)
+
+                net%cached_mu = latent_mu
+                net%cached_log_var = latent_log_var
+                net%cached_epsilon = epsilon
+
+                z = latent_mu + exp(0.5 * latent_log_var) * epsilon
+            else
+                z = latent_mu  ! No noise during inference
+            end if
+            layer_input = z
 
             do i = 1, net%config%num_layers - 1
                 layer_input = upsample(layer_input, net%config%stride)
                 call conv_forward(net%decoder(i), layer_input, layer_output)
-                net%decoder_cache(i)%pre_relu = layer_output
+                if (net%decoder(i)%training) net%decoder_cache(i)%pre_relu = layer_output
                 layer_output = relu_forward(layer_output)
 
+                layer_input = layer_output
+            end do
+
+            layer_input = upsample(layer_input, net%config%stride)
+            call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
+            output = sigmoid_forward(output)
+        end subroutine
+
+        subroutine decode_latent(net, latent, output)
+            type(autoencoder), intent(inout) :: net
+            real, intent(in) :: latent(:, :,:,:)
+            real, allocatable, intent(out) :: output(:, :,:,:)
+
+            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
+            integer :: i
+
+            layer_input = latent
+            do i = 1, net%config%num_layers - 1
+                layer_input = upsample(layer_input, net%config%stride)
+                call conv_forward(net%decoder(i), layer_input, layer_output)
+                layer_output = relu_forward(layer_output)
                 layer_input = layer_output
             end do
 
@@ -129,6 +196,8 @@ module cnn_autoencoder
             real, intent(in) :: grad_loss(:, :,:,:)
             
             real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:)
+            real, allocatable :: grad_mu(:, :,:,:), grad_log_var(:, :,:,:)
+            real, allocatable :: grad_input_mu(:, :,:,:), grad_input_log_var(:, :,:,:)
             integer :: i
 
             grad_output = sigmoid_backward(output, grad_loss)
@@ -140,6 +209,16 @@ module cnn_autoencoder
             end do
 
             grad_input = upsample_backward(grad_input, net%config%stride)
+
+            grad_mu = grad_input
+            grad_log_var = grad_input * net%cached_epsilon * 0.5 * exp(0.5 * net%cached_log_var)
+            grad_mu = grad_mu + net%config%beta * net%cached_mu
+            grad_log_var = grad_log_var + net%config%beta * 0.5 *(exp(net%cached_log_var) - 1.0)
+
+            call conv_backward(net%latent_mu, grad_mu, grad_input_mu)
+            call conv_backward(net%latent_log_var, grad_log_var, grad_input_log_var)
+
+            grad_input = grad_input_mu + grad_input_log_var
 
             do i = net%config%num_layers, 1, -1
                 grad_output = relu_backward(net%encoder_cache(i)%pre_relu, grad_input)
@@ -157,7 +236,14 @@ module cnn_autoencoder
             do i = 1, net%config%num_layers
                 write(unit) net%encoder(i)%weights
                 write(unit) net%encoder(i)%bias
+            end do
 
+            write(unit) net%latent_mu%weights
+            write(unit) net%latent_mu%bias
+            write(unit) net%latent_log_var%weights
+            write(unit) net%latent_log_var%bias
+
+            do i = 1, net%config%num_layers
                 write(unit) net%decoder(i)%weights
                 write(unit) net%decoder(i)%bias
             end do
@@ -175,7 +261,14 @@ module cnn_autoencoder
             do i = 1, net%config%num_layers
                 read(unit) net%encoder(i)%weights
                 read(unit) net%encoder(i)%bias
+            end do
 
+            read(unit) net%latent_mu%weights
+            read(unit) net%latent_mu%bias
+            read(unit) net%latent_log_var%weights
+            read(unit) net%latent_log_var%bias
+
+            do i = 1, net%config%num_layers
                 read(unit) net%decoder(i)%weights
                 read(unit) net%decoder(i)%bias
             end do

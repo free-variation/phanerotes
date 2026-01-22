@@ -21,6 +21,7 @@ module cnn_core
         real, allocatable :: bias_grad(:)
 
         ! cached for backward pass
+        logical :: training
         real, allocatable :: input_cache(:, :,:,:)
         real, allocatable :: col_cache(:,:)
     end type
@@ -143,8 +144,10 @@ module cnn_core
             end do
 
             ! Cache for backward pass: need original input layout and its column form
-            layer%input_cache = input
-            layer%col_cache = col_form
+            if (layer%training) then
+                layer%input_cache = input
+                layer%col_cache = col_form
+            end if
 
         end subroutine
 

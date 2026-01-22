@@ -39,6 +39,9 @@ module train
                 call sgd_update(net%encoder(i), learning_rate)
                 call sgd_update(net%decoder(i), learning_rate)
             end do
+
+            call sgd_update(net%latent_mu, learning_rate)
+            call sgd_update(net%latent_log_var, learning_rate)
         end subroutine
 
         subroutine train_network(net, images, batch_size, num_epochs, learning_rate, run_name)
@@ -49,7 +52,7 @@ module train
             character(*), intent(in), optional :: run_name
 
             integer :: epoch, batch_start, batch_end, num_samples, num_batches, batch_num
-            real, allocatable :: latent(:, :,:,:), output(:, :,:,:)
+            real, allocatable :: latent_mu(:, :,:,:), latent_log_var(:, :,:,:), output(:, :,:,:)
             real, allocatable :: grad_loss(:, :,:,:)
             real :: total_loss, t_start, t_end
             character(len=256) :: checkpoint_file
@@ -66,7 +69,7 @@ module train
                     batch_end = min(batch_start + batch_size - 1, num_samples)
                     batch_num = batch_num + 1
 
-                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), latent, output)
+                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), latent_mu, latent_log_var, output)
 
                     total_loss = total_loss + mse_loss(output, images(batch_start:batch_end,:,:,:))
                     grad_loss = mse_loss_grad(output, images(batch_start:batch_end,:,:,:))
