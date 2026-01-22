@@ -142,8 +142,15 @@ module cnn_autoencoder
 
             if (net%latent_mu%training) then
                 allocate(epsilon, mold = latent_mu)
-                call random_number(epsilon)
-                epsilon = (epsilon - 0.5) * 2.0 * sqrt(2.0)
+                block
+                    real, allocatable :: u1(:,:,:,:), u2(:,:,:,:)
+                    real, parameter :: PI = 3.14159265358979323846
+                    allocate(u1, u2, mold = latent_mu)
+                    call random_number(u1)
+                    call random_number(u2)
+                    u1 = max(u1, 1.0e-10)  ! avoid log(0)
+                    epsilon = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2)
+                end block
 
                 net%cached_mu = latent_mu
                 net%cached_log_var = latent_log_var
