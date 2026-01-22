@@ -32,11 +32,11 @@ module cnn_core
             real, intent(in) :: input(:, :,:,:)
             integer, intent(in) :: kernel_width, kernel_height, stride, padding
             real, allocatable :: im2col(:,:)
-            
+
             integer :: batch_size, num_channels, width, height
             integer :: out_width, out_height
             real, allocatable :: padded(:, :,:,:)
-            integer :: b, oi, oj, col_idx, i_start, j_start
+            integer :: b, oi, oj, col_idx, i_start, j_start, ki, kj, base_idx
 
             batch_size = size(input, 1)
             num_channels = size(input, 2)
@@ -51,14 +51,22 @@ module cnn_core
             padded = 0.0
             padded(:, :, padding+1:padding+width, padding+1:padding+height) = input
 
-            do concurrent (b = 1:batch_size, oi = 1:out_width, oj = 1:out_height)
-                col_idx = (b - 1)*out_width*out_height + (oj - 1) * out_width + oi
-                i_start = (oi - 1) * stride + 1
-                j_start = (oj - 1) * stride + 1
+            do b = 1, batch_size
+                do oj = 1, out_height
+                    do oi = 1, out_width
+                        col_idx = (b - 1)*out_width*out_height + (oj - 1) * out_width + oi
+                        i_start = (oi - 1) * stride + 1
+                        j_start = (oj - 1) * stride + 1
 
-                im2col(:, col_idx) = reshape(&
-                    padded(b, :, i_start:i_start+kernel_width-1, j_start:j_start+kernel_height-1),&
-                    [num_channels * kernel_width * kernel_height])
+                        do kj = 1, kernel_height
+                            do ki = 1, kernel_width
+                                base_idx = (kj-1)*kernel_width*num_channels + (ki-1)*num_channels + 1
+                                im2col(base_idx:base_idx+num_channels-1, col_idx) = &
+                                    padded(b, :, i_start+ki-1, j_start+kj-1)
+                            end do
+                        end do
+                    end do
+                end do
             end do
         end function
 
@@ -69,7 +77,7 @@ module cnn_core
             real, allocatable :: col2im(:, :,:,:)
 
             integer :: out_width, out_height
-            integer :: b, oi, oj, col_idx, i_start, j_start
+            integer :: b, oi, oj, col_idx, i_start, j_start, ki, kj, base_idx
             real, allocatable :: padded(:, :,:,:)
 
             out_width =  (width + 2*padding - kernel_width) / stride + 1
@@ -84,9 +92,14 @@ module cnn_core
                         i_start = (oi - 1) * stride + 1
                         j_start = (oj - 1) * stride + 1
 
-                        padded(b, :, i_start:i_start+kernel_width-1, j_start:j_start+kernel_height-1) = &
-                            padded(b, :, i_start:i_start+kernel_width-1, j_start:j_start+kernel_height-1) + &
-                            reshape(col_form(:, col_idx), [num_channels, kernel_width, kernel_height])
+                        do kj = 1, kernel_height
+                            do ki = 1, kernel_width
+                                base_idx = (kj-1)*kernel_width*num_channels + (ki-1)*num_channels + 1
+                                padded(b, :, i_start+ki-1, j_start+kj-1) = &
+                                    padded(b, :, i_start+ki-1, j_start+kj-1) + &
+                                    col_form(base_idx:base_idx+num_channels-1, col_idx)
+                            end do
+                        end do
                     end do
                 end do
             end do
@@ -132,7 +145,9 @@ module cnn_core
             out_height = (size(input, 4) + 2*layer%padding - layer%kernel_height) / layer%stride + 1
 
             ! Bias is per output channel, broadcast across all spatial positions
-            output_matrix = output_matrix + spread(layer%bias, 2, n)
+            do b = 1, n
+                output_matrix(:, b) = output_matrix(:, b) + layer%bias
+            end do
 
             ! Reshape to 4D: extract each batch's columns separately
             allocate(output(batch_size, layer%out_channels, out_width, out_height))

@@ -35,7 +35,7 @@ program train_full_images
     end if
 
     training_dir = "images/training_data/"
-    batch_size = 4
+    batch_size = 8
 
     print *, "Tile size:", tile_width, "x", tile_height
 
