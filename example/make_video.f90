@@ -75,7 +75,7 @@ program make_video
 
     print *, "Initializing autoencoder..."
     net = autoencoder_init(config)
-    call load_weights(net, "models/ae-weights-512.bin")
+    call load_weights(net, "ae-weights-576x384.bin")
     call set_training(net, .false.)
 
     print *, "Loading image..."

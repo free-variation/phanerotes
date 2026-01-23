@@ -219,8 +219,9 @@ module cnn_autoencoder
 
             grad_mu = grad_input
             grad_log_var = grad_input * net%cached_epsilon * 0.5 * exp(0.5 * net%cached_log_var)
-            grad_mu = grad_mu + net%config%beta * net%cached_mu
-            grad_log_var = grad_log_var + net%config%beta * 0.5 *(exp(net%cached_log_var) - 1.0)
+            grad_mu = grad_mu + net%config%beta * net%cached_mu/size(net%cached_mu)
+            grad_log_var = grad_log_var + net%config%beta * 0.5 *(exp(net%cached_log_var) - 1.0)/&
+                size(net%cached_log_var)
 
             call conv_backward(net%latent_mu, grad_mu, grad_input_mu)
             call conv_backward(net%latent_log_var, grad_log_var, grad_input_log_var)
