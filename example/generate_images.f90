@@ -40,7 +40,6 @@ program generate_images
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
-    config%beta = 0.0
 
     net = autoencoder_init(config)
     call set_training(net, .false.)

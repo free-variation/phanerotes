@@ -7,7 +7,7 @@ program make_video
     type(autoencoder_config) :: config
     type(autoencoder) :: net
     real, allocatable :: img(:,:,:)
-    real, allocatable :: tile(:,:,:,:), latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+    real, allocatable :: tile(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
     real, allocatable :: all_latents(:,:,:,:,:)  ! (num_tiles, batch, channels, w, h)
     real, allocatable :: all_outputs(:,:,:,:,:)  ! (num_tiles, batch, channels, w, h)
     real, allocatable :: latent_flat(:,:)        ! (num_tiles, flattened_size)
@@ -39,7 +39,6 @@ program make_video
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
-    config%beta = 0.001
 
     tile_size = 512
     fps = 24
@@ -102,16 +101,16 @@ program make_video
     ! First pass to get latent dimensions
     allocate(tile(1, channels, tile_size, tile_size))
     tile(1, :, :, :) = img(:, 1:tile_size, 1:tile_size)
-    call autoencoder_forward(net, tile, latent_mu, latent_log_var, output)
-    latent_size = size(latent_mu, 2) * size(latent_mu, 3) * size(latent_mu, 4)
+    call autoencoder_forward(net, tile, latent, output)
+    latent_size = size(latent, 2) * size(latent, 3) * size(latent, 4)
 
-    allocate(all_latents(num_tiles, size(latent_mu,1), size(latent_mu,2), size(latent_mu,3), size(latent_mu,4)))
+    allocate(all_latents(num_tiles, size(latent,1), size(latent,2), size(latent,3), size(latent,4)))
     allocate(all_outputs(num_tiles, size(output,1), size(output,2), size(output,3), size(output,4)))
     allocate(latent_flat(num_tiles, latent_size))
     allocate(norms(num_tiles))
     deallocate(tile)
 
-    !$omp parallel do private(n, i, j, x_start, x_end, y_start, y_end, tile, latent_mu, latent_log_var, output) schedule(dynamic)
+    !$omp parallel do private(n, i, j, x_start, x_end, y_start, y_end, tile, latent, output) schedule(dynamic)
     do n = 1, num_tiles
         i = mod(n - 1, tiles_x) + 1
         j = (n - 1) / tiles_x + 1
@@ -123,11 +122,11 @@ program make_video
 
         allocate(tile(1, channels, tile_size, tile_size))
         tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
-        call autoencoder_forward(net, tile, latent_mu, latent_log_var, output)
+        call autoencoder_forward(net, tile, latent, output)
 
-        all_latents(n, :, :, :, :) = latent_mu
+        all_latents(n, :, :, :, :) = latent
         all_outputs(n, :, :, :, :) = output
-        latent_flat(n, :) = reshape(latent_mu, [latent_size])
+        latent_flat(n, :) = reshape(latent, [latent_size])
         norms(n) = sqrt(sum(latent_flat(n, :)**2))
         deallocate(tile)
 

@@ -1109,7 +1109,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1138,7 +1137,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1202,7 +1200,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1251,7 +1248,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1278,7 +1274,7 @@ contains
     subroutine test_autoencoder_forward_dimensions()
         type(autoencoder_config) :: config
         type(autoencoder) :: net
-        real, allocatable :: input(:,:,:,:), latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+        real, allocatable :: input(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
 
         config%input_channels = 3
         config%num_layers = 3
@@ -1288,7 +1284,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1296,13 +1291,13 @@ contains
         allocate(input(1, 3, 32, 32))
         call random_number(input)
 
-        call autoencoder_forward(net, input, latent_mu, latent_log_var, output)
+        call autoencoder_forward(net, input, latent, output)
 
         ! Latent should be (1, max_channels, 4, 4) after 3 stride-2 downsamples
-        if (size(latent_mu, 1) /= 1 .or. size(latent_mu, 2) /= 256 .or. &
-            size(latent_mu, 3) /= 4 .or. size(latent_mu, 4) /= 4) then
+        if (size(latent, 1) /= 1 .or. size(latent, 2) /= 256 .or. &
+            size(latent, 3) /= 4 .or. size(latent, 4) /= 4) then
             print *, "FAIL autoencoder_forward_dimensions: latent shape wrong", &
-                     size(latent_mu, 1), size(latent_mu, 2), size(latent_mu, 3), size(latent_mu, 4)
+                     size(latent, 1), size(latent, 2), size(latent, 3), size(latent, 4)
             error stop
         end if
 
@@ -1320,7 +1315,7 @@ contains
     subroutine test_autoencoder_forward_output_range()
         type(autoencoder_config) :: config
         type(autoencoder) :: net
-        real, allocatable :: input(:,:,:,:), latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+        real, allocatable :: input(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
         real :: min_val, max_val
 
         config%input_channels = 1
@@ -1331,14 +1326,13 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
         allocate(input(1, 1, 16, 16))
         call random_number(input)
 
-        call autoencoder_forward(net, input, latent_mu, latent_log_var, output)
+        call autoencoder_forward(net, input, latent, output)
 
         ! Output should be in [0, 1] due to sigmoid
         min_val = minval(output)
@@ -1353,13 +1347,10 @@ contains
     end subroutine
 
     subroutine test_autoencoder_backward_numerical()
-        ! VAE stochastic sampling prevents exact numerical gradient checking
-        ! (each forward uses different random epsilon). This test verifies
-        ! backward produces non-zero gradients; training test verifies they work.
         type(autoencoder_config) :: config
         type(autoencoder) :: net
         real, allocatable :: input(:,:,:,:), target(:,:,:,:)
-        real, allocatable :: latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+        real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
         real, allocatable :: grad_loss(:,:,:,:)
 
         config%input_channels = 1
@@ -1370,7 +1361,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1379,7 +1369,7 @@ contains
         call random_number(input)
         call random_number(target)
 
-        call autoencoder_forward(net, input, latent_mu, latent_log_var, output)
+        call autoencoder_forward(net, input, latent, output)
 
         allocate(grad_loss, mold=output)
         grad_loss = 2.0 * (output - target) / size(output)
@@ -1394,16 +1384,6 @@ contains
 
         if (maxval(abs(net%decoder(1)%weights_grad)) < 1e-10) then
             print *, "FAIL: decoder gradients are zero"
-            error stop
-        end if
-
-        if (maxval(abs(net%latent_mu%weights_grad)) < 1e-10) then
-            print *, "FAIL: latent_mu gradients are zero"
-            error stop
-        end if
-
-        if (maxval(abs(net%latent_log_var%weights_grad)) < 1e-10) then
-            print *, "FAIL: latent_log_var gradients are zero"
             error stop
         end if
 
@@ -1563,7 +1543,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         ! Create and save
         net1 = autoencoder_init(config)
@@ -1582,12 +1561,6 @@ contains
             max_err = max(max_err, maxval(abs(net1%decoder(i)%bias - net2%decoder(i)%bias)))
         end do
 
-        ! Verify latent layer weights match
-        max_err = max(max_err, maxval(abs(net1%latent_mu%weights - net2%latent_mu%weights)))
-        max_err = max(max_err, maxval(abs(net1%latent_mu%bias - net2%latent_mu%bias)))
-        max_err = max(max_err, maxval(abs(net1%latent_log_var%weights - net2%latent_log_var%weights)))
-        max_err = max(max_err, maxval(abs(net1%latent_log_var%bias - net2%latent_log_var%bias)))
-
         if (max_err > 1e-10) then
             print *, "FAIL save_load_weights: weights don't match, max_err =", max_err
             error stop
@@ -1604,7 +1577,7 @@ contains
         type(autoencoder_config) :: config
         type(autoencoder) :: net
         real, allocatable :: images(:,:,:,:)
-        real, allocatable :: latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+        real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
         real :: loss_before, loss_after
         real :: lr
         integer :: epoch, i, j, k
@@ -1618,7 +1591,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1640,7 +1612,7 @@ contains
         ! Compute loss before training (using batch size 1)
         loss_before = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), latent_mu, latent_log_var, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
             loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_before = loss_before / 4.0
@@ -1649,7 +1621,7 @@ contains
         lr = 0.1
         do epoch = 1, 100
             do i = 1, 4
-                call autoencoder_forward(net, images(i:i,:,:,:), latent_mu, latent_log_var, output)
+                call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
                 grad_loss = mse_loss_grad(output, images(i:i,:,:,:))
                 call autoencoder_backward(net, output, grad_loss)
                 call sgd_update_all(net, lr)
@@ -1659,7 +1631,7 @@ contains
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), latent_mu, latent_log_var, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
             loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_after = loss_after / 4.0
@@ -1785,8 +1757,8 @@ contains
     subroutine test_autoencoder_forward_batched()
         type(autoencoder_config) :: config
         type(autoencoder) :: net
-        real, allocatable :: input_batch(:,:,:,:), latent_mu_batch(:,:,:,:), latent_log_var_batch(:,:,:,:), output_batch(:,:,:,:)
-        real, allocatable :: input_single(:,:,:,:), latent_mu_single(:,:,:,:), latent_log_var_single(:,:,:,:), output_single(:,:,:,:)
+        real, allocatable :: input_batch(:,:,:,:), latent_batch(:,:,:,:), output_batch(:,:,:,:)
+        real, allocatable :: input_single(:,:,:,:), latent_single(:,:,:,:), output_single(:,:,:,:)
         integer :: batch_size, b
         real :: max_err
 
@@ -1798,20 +1770,19 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
-        call set_training(net, .false.)  ! Disable training to avoid random sampling
+        call set_training(net, .false.)
 
         batch_size = 4
         allocate(input_batch(batch_size, 3, 16, 16))
         call random_number(input_batch)
 
         ! Batched forward
-        call autoencoder_forward(net, input_batch, latent_mu_batch, latent_log_var_batch, output_batch)
+        call autoencoder_forward(net, input_batch, latent_batch, output_batch)
 
         ! Check batch dimension preserved
-        if (size(output_batch, 1) /= batch_size .or. size(latent_mu_batch, 1) /= batch_size) then
+        if (size(output_batch, 1) /= batch_size .or. size(latent_batch, 1) /= batch_size) then
             print *, "FAIL autoencoder_forward_batched: batch dimension wrong"
             error stop
         end if
@@ -1821,11 +1792,11 @@ contains
         do b = 1, batch_size
             allocate(input_single(1, 3, 16, 16))
             input_single(1, :, :, :) = input_batch(b, :, :, :)
-            call autoencoder_forward(net, input_single, latent_mu_single, latent_log_var_single, output_single)
+            call autoencoder_forward(net, input_single, latent_single, output_single)
 
             max_err = max(max_err, maxval(abs(output_batch(b:b, :, :, :) - output_single)))
-            max_err = max(max_err, maxval(abs(latent_mu_batch(b:b, :, :, :) - latent_mu_single)))
-            deallocate(input_single, latent_mu_single, latent_log_var_single, output_single)
+            max_err = max(max_err, maxval(abs(latent_batch(b:b, :, :, :) - latent_single)))
+            deallocate(input_single, latent_single, output_single)
         end do
 
         if (max_err > 1e-5) then
@@ -1837,11 +1808,9 @@ contains
     end subroutine
 
     subroutine test_autoencoder_backward_batched()
-        ! VAE stochastic sampling means batched vs single gradient comparison
-        ! won't match exactly. This test verifies batched backward runs correctly.
         type(autoencoder_config) :: config
         type(autoencoder) :: net
-        real, allocatable :: input_batch(:,:,:,:), latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output_batch(:,:,:,:)
+        real, allocatable :: input_batch(:,:,:,:), latent(:,:,:,:), output_batch(:,:,:,:)
         real, allocatable :: grad_loss_batch(:,:,:,:)
         integer :: batch_size
 
@@ -1853,7 +1822,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1862,7 +1830,7 @@ contains
         call random_number(input_batch)
 
         ! Batched forward + backward
-        call autoencoder_forward(net, input_batch, latent_mu, latent_log_var, output_batch)
+        call autoencoder_forward(net, input_batch, latent, output_batch)
         allocate(grad_loss_batch, mold=output_batch)
         call random_number(grad_loss_batch)
         call autoencoder_backward(net, output_batch, grad_loss_batch)
@@ -1886,7 +1854,7 @@ contains
         type(autoencoder_config) :: config
         type(autoencoder) :: net
         real, allocatable :: images(:,:,:,:)
-        real, allocatable :: latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+        real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
         real :: loss_before, loss_after
         integer :: i, j, k, batch_size
 
@@ -1898,7 +1866,6 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
-        config%beta = 0.001
 
         net = autoencoder_init(config)
 
@@ -1915,7 +1882,7 @@ contains
         ! Compute loss before training
         loss_before = 0.0
         do i = 1, 8
-            call autoencoder_forward(net, images(i:i,:,:,:), latent_mu, latent_log_var, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
             loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_before = loss_before / 8.0
@@ -1927,7 +1894,7 @@ contains
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 8
-            call autoencoder_forward(net, images(i:i,:,:,:), latent_mu, latent_log_var, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
             loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_after = loss_after / 8.0

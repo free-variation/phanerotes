@@ -6,7 +6,7 @@ program test_reconstruction
     type(autoencoder_config) :: config
     type(autoencoder) :: net
     real, allocatable :: img(:,:,:)
-    real, allocatable :: tile(:,:,:,:), latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+    real, allocatable :: tile(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
     real, allocatable :: tile_3d(:,:,:), output_3d(:,:,:)
     integer, allocatable :: tile_x(:), tile_y(:)
     integer :: width, height, channels
@@ -23,7 +23,6 @@ program test_reconstruction
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
-    config%beta = 0.001
 
     tile_size = 512
 
@@ -74,7 +73,7 @@ program test_reconstruction
         tile(1, :, :, :) = img(:, (i-1)*tile_size+1:i*tile_size, (j-1)*tile_size+1:j*tile_size)
 
         ! Run through autoencoder
-        call autoencoder_forward(net, tile, latent_mu, latent_log_var, output)
+        call autoencoder_forward(net, tile, latent, output)
 
         print *, ""
         print *, "Tile", n, "at grid pos (", i, ",", j, ")"

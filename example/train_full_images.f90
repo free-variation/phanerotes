@@ -102,7 +102,6 @@ program train_full_images
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
-    config%beta = 0.1
 
     print *, "Initializing autoencoder..."
     net = autoencoder_init(config)

@@ -7,7 +7,7 @@ program reconstruct_image
     type(autoencoder_config) :: config
     type(autoencoder) :: net
     real, allocatable :: img(:,:,:), reconstructed(:,:,:)
-    real, allocatable :: tile(:,:,:,:), latent_mu(:,:,:,:), latent_log_var(:,:,:,:), output(:,:,:,:)
+    real, allocatable :: tile(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
     integer :: width, height, channels
     integer :: tile_size, i, j, tiles_x, tiles_y
     integer :: x_start, x_end, y_start, y_end
@@ -22,7 +22,6 @@ program reconstruct_image
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
-    config%beta = 0.001
 
     tile_size = 512
 
@@ -47,7 +46,7 @@ program reconstruct_image
     allocate(reconstructed(channels, tiles_x * tile_size, tiles_y * tile_size))
     total_tiles = tiles_x * tiles_y
 
-    !$omp parallel do private(n, i, j, x_start, x_end, y_start, y_end, tile, latent_mu, latent_log_var, output) schedule(dynamic)
+    !$omp parallel do private(n, i, j, x_start, x_end, y_start, y_end, tile, latent, output) schedule(dynamic)
     do n = 1, total_tiles
         i = mod(n - 1, tiles_x) + 1
         j = (n - 1) / tiles_x + 1
@@ -59,7 +58,7 @@ program reconstruct_image
 
         allocate(tile(1, channels, tile_size, tile_size))
         tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
-        call autoencoder_forward(net, tile, latent_mu, latent_log_var, output)
+        call autoencoder_forward(net, tile, latent, output)
         reconstructed(:, x_start:x_end, y_start:y_end) = output(1, :, :, :)
         deallocate(tile)
 
