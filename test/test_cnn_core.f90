@@ -1162,24 +1162,33 @@ contains
             error stop
         end if
 
-        ! Decoder mirrors encoder: 512->512, 512->256, 256->128, 128->3
-        if (net%decoder(1)%in_channels /= 512 .or. net%decoder(1)%out_channels /= 512) then
-            print *, "FAIL autoencoder_init_channels: decoder(1) wrong"
+        ! U-Net decoder: includes skip connection channels
+        ! decoder(i) in_channels = encoder(N-i+1).out + encoder(N-i).out (for i < N)
+        ! decoder(1): 512 + 512 = 1024 -> 512
+        if (net%decoder(1)%in_channels /= 1024 .or. net%decoder(1)%out_channels /= 512) then
+            print *, "FAIL autoencoder_init_channels: decoder(1) wrong", &
+                     net%decoder(1)%in_channels, net%decoder(1)%out_channels
             error stop
         end if
 
-        if (net%decoder(2)%in_channels /= 512 .or. net%decoder(2)%out_channels /= 256) then
-            print *, "FAIL autoencoder_init_channels: decoder(2) wrong"
+        ! decoder(2): 512 + 256 = 768 -> 256
+        if (net%decoder(2)%in_channels /= 768 .or. net%decoder(2)%out_channels /= 256) then
+            print *, "FAIL autoencoder_init_channels: decoder(2) wrong", &
+                     net%decoder(2)%in_channels, net%decoder(2)%out_channels
             error stop
         end if
 
-        if (net%decoder(3)%in_channels /= 256 .or. net%decoder(3)%out_channels /= 128) then
-            print *, "FAIL autoencoder_init_channels: decoder(3) wrong"
+        ! decoder(3): 256 + 128 = 384 -> 128
+        if (net%decoder(3)%in_channels /= 384 .or. net%decoder(3)%out_channels /= 128) then
+            print *, "FAIL autoencoder_init_channels: decoder(3) wrong", &
+                     net%decoder(3)%in_channels, net%decoder(3)%out_channels
             error stop
         end if
 
+        ! decoder(4): 128 (no skip for last decoder) -> 3
         if (net%decoder(4)%in_channels /= 128 .or. net%decoder(4)%out_channels /= 3) then
-            print *, "FAIL autoencoder_init_channels: decoder(4) wrong"
+            print *, "FAIL autoencoder_init_channels: decoder(4) wrong", &
+                     net%decoder(4)%in_channels, net%decoder(4)%out_channels
             error stop
         end if
 

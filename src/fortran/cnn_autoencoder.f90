@@ -16,7 +16,11 @@ module cnn_autoencoder
     end type
 
     type :: activation_cache
-        real, allocatable :: pre_relu(:, :,:,:)
+        real, allocatable :: activations(:, :,:,:)
+    end type
+
+    type :: gradient_cache
+        real, allocatable :: gradients(:, :,:,:)
     end type
 
     type :: autoencoder
@@ -85,6 +89,9 @@ module cnn_autoencoder
 
             do i = 1, config%num_layers
                 in_channels = net%encoder(config%num_layers - i + 1)%out_channels
+                if (i < config%num_layers) then
+                    in_channels = in_channels + net%encoder(config%num_layers - i)%out_channels
+                end if
                 out_channels = net%encoder(config%num_layers - i + 1)%in_channels
 
                 call init_layer(net%decoder(i), config, in_channels, out_channels, 1)
@@ -103,55 +110,56 @@ module cnn_autoencoder
            end do
        end subroutine
 
-        subroutine autoencoder_forward(net, input, latent, output) 
+        function concatenate_channels(a, b)
+            real, intent(in) :: a(:, :,:,:), b(:, :,:,:)
+            real, allocatable :: concatenate_channels(:, :,:,:)
+            integer :: num_channels1, num_channels2
+
+            num_channels1 = size(a, 2)
+            num_channels2 = size(b, 2)
+
+            allocate(concatenate_channels(size(a, 1), num_channels1 + num_channels2, size(a, 3), size(a, 4)))
+            concatenate_channels(:, 1:num_channels1, :, :) = a
+            concatenate_channels(:, num_channels1 + 1:num_channels1 + num_channels2, :, :) = b
+        end function
+
+       subroutine autoencoder_forward(net, input, latent, output, encoder_acts_out)
             type(autoencoder), intent(inout) :: net
             real, intent(in) :: input(:, :,:,:)
             real, allocatable, intent(out) :: latent(:, :,:,:)
             real, allocatable, intent(out) :: output(:, :,:,:)
+            type(activation_cache), allocatable, intent(out), optional :: encoder_acts_out(:)
 
-            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
+            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:), concatenated_inputs(:, :,:,:)
+            type(activation_cache), allocatable :: encoder_activations(:)
             integer :: i
-            real, allocatable :: z(:, :,:,:), epsilon(:, :,:,:)
+
+            allocate(encoder_activations(net%config%num_layers - 1))
 
             layer_input = input
             do i = 1, net%config%num_layers
                 call conv_forward(net%encoder(i), layer_input, layer_output)
-                if (net%encoder(i)%training) net%encoder_cache(i)%pre_relu = layer_output
+                if (net%encoder(i)%training) net%encoder_cache(i)%activations = layer_output
+
                 layer_output = relu_forward(layer_output)
+                if (i < net%config%num_layers) encoder_activations(i)%activations = layer_output
 
                 layer_input = layer_output
             end do
 
             latent = layer_output
+            if (present(encoder_acts_out)) encoder_acts_out = encoder_activations
             layer_input = layer_output
 
             do i = 1, net%config%num_layers - 1
                 layer_input = upsample(layer_input, net%config%stride)
-                call conv_forward(net%decoder(i), layer_input, layer_output)
-                if (net%decoder(i)%training) net%decoder_cache(i)%pre_relu = layer_output
+                concatenated_inputs = concatenate_channels(layer_input, &
+                    encoder_activations(net%config%num_layers - i)%activations)
+
+                call conv_forward(net%decoder(i), concatenated_inputs, layer_output)
+                if (net%decoder(i)%training) net%decoder_cache(i)%activations = layer_output
                 layer_output = relu_forward(layer_output)
 
-                layer_input = layer_output
-            end do
-
-            layer_input = upsample(layer_input, net%config%stride)
-            call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
-            output = sigmoid_forward(output)
-        end subroutine
-
-        subroutine decode_latent(net, latent, output)
-            type(autoencoder), intent(inout) :: net
-            real, intent(in) :: latent(:, :,:,:)
-            real, allocatable, intent(out) :: output(:, :,:,:)
-
-            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
-            integer :: i
-
-            layer_input = latent
-            do i = 1, net%config%num_layers - 1
-                layer_input = upsample(layer_input, net%config%stride)
-                call conv_forward(net%decoder(i), layer_input, layer_output)
-                layer_output = relu_forward(layer_output)
                 layer_input = layer_output
             end do
 
@@ -166,20 +174,31 @@ module cnn_autoencoder
             real, intent(in) :: grad_loss(:, :,:,:)
             
             real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:)
-            integer :: i
+            type(gradient_cache), allocatable :: skip_gradients(:)
+            integer :: i, num_skip_channels
+
+            allocate(skip_gradients(net%config%num_layers - 1))
 
             grad_output = sigmoid_backward(output, grad_loss)
             call conv_backward(net%decoder(net%config%num_layers), grad_output, grad_input)
             do i = net%config%num_layers - 1, 1, -1
                 grad_output = upsample_backward(grad_input, net%config%stride)
-                grad_output = relu_backward(net%decoder_cache(i)%pre_relu, grad_output)
+                grad_output = relu_backward(net%decoder_cache(i)%activations, grad_output)
+
                 call conv_backward(net%decoder(i), grad_output, grad_input)
+                
+                num_skip_channels = net%encoder(net%config%num_layers - i)%out_channels
+                skip_gradients(i)%gradients = grad_input(:, size(grad_input, 2) - num_skip_channels + 1:, :, :)
+                grad_input = grad_input(:, 1:size(grad_input, 2) - num_skip_channels, :, :) 
             end do
 
             grad_input = upsample_backward(grad_input, net%config%stride)
 
             do i = net%config%num_layers, 1, -1
-                grad_output = relu_backward(net%encoder_cache(i)%pre_relu, grad_input)
+                if (i < net%config%num_layers) then
+                    grad_input = grad_input + skip_gradients(net%config%num_layers - i)%gradients
+                end if
+                grad_output = relu_backward(net%encoder_cache(i)%activations, grad_input)
                 call conv_backward(net%encoder(i), grad_output, grad_input)
             end do
         end subroutine
@@ -222,6 +241,73 @@ module cnn_autoencoder
             end do
 
             close(unit)
+        end subroutine
+
+        subroutine decode_latent(net, latent, output)
+            type(autoencoder), intent(inout) :: net
+            real, intent(in) :: latent(:, :,:,:)
+            real, allocatable, intent(out) :: output(:, :,:,:)
+
+            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:), padded_input(:, :,:,:)
+            integer :: i, batch_size, decoder_channels, skip_channels, width, height
+
+            layer_input = latent
+            do i = 1, net%config%num_layers - 1
+                layer_input = upsample(layer_input, net%config%stride)
+
+                batch_size = size(layer_input, 1)
+                decoder_channels = size(layer_input, 2)
+                width = size(layer_input, 3)
+                height = size(layer_input, 4)
+                skip_channels = net%encoder(net%config%num_layers - i)%out_channels
+
+                allocate(padded_input(batch_size, decoder_channels + skip_channels, width, height))
+                padded_input(:, 1:decoder_channels, :, :) = layer_input
+                padded_input(:, decoder_channels + 1:, :, :) = 0.0
+
+                call conv_forward(net%decoder(i), padded_input, layer_output)
+                deallocate(padded_input)
+
+                layer_output = relu_forward(layer_output)
+                layer_input = layer_output
+            end do
+
+            layer_input = upsample(layer_input, net%config%stride)
+            call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
+            output = sigmoid_forward(output)
+        end subroutine
+
+        subroutine decode_latent_interpolated(net, latent_a, latent_b, &
+                encoder_acts_a, encoder_acts_b, alpha, output)
+            type(autoencoder), intent(inout) :: net
+            real, intent(in) :: latent_a(:, :,:,:), latent_b(:, :,:,:)
+            type(activation_cache), intent(in) :: encoder_acts_a(:), encoder_acts_b(:)
+            real, intent(in) :: alpha
+            real, allocatable, intent(out) :: output(:, :,:,:)
+
+            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
+            real, allocatable :: skip_interp(:, :,:,:), concatenated_inputs(:, :,:,:)
+            integer :: i, skip_idx
+
+            layer_input = alpha * latent_a + (1.0 - alpha) * latent_b
+
+            do i = 1, net%config%num_layers - 1
+                layer_input = upsample(layer_input, net%config%stride)
+
+                skip_idx = net%config%num_layers - i
+                skip_interp = alpha * encoder_acts_a(skip_idx)%activations + &
+                    (1.0 - alpha) * encoder_acts_b(skip_idx)%activations
+
+                concatenated_inputs = concatenate_channels(layer_input, skip_interp)
+
+                call conv_forward(net%decoder(i), concatenated_inputs, layer_output)
+                layer_output = relu_forward(layer_output)
+                layer_input = layer_output
+            end do
+
+            layer_input = upsample(layer_input, net%config%stride)
+            call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
+            output = sigmoid_forward(output)
         end subroutine
 
 end module
