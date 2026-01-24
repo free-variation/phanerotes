@@ -9,8 +9,10 @@ program train_full_images
     real, allocatable :: tiles(:,:,:,:)
     real, allocatable :: img(:,:,:)
     character(len=512) :: filename
+    character(len=512), allocatable :: filenames(:)
     character(len=64) :: training_dir, arg
     integer :: i, j, k, idx, num_images, channels, width, height, unit_num, ios
+    integer :: base_idx
     integer :: tile_width, tile_height, tiles_x, tiles_y, tiles_per_image, total_tiles, batch_size
     integer :: num_epochs
     logical :: use_concatenate
@@ -23,6 +25,7 @@ program train_full_images
         print *, "Options:"
         print *, "  --height N  - tile height (default: same as width)"
         print *, "  --epochs N  - number of training epochs (default: 10)"
+        print *, "  --batch N   - batch size (default: 8)"
         print *, "  --add       - use addition for skip connections"
         print *, "  --concat    - use concatenation for skip connections (default)"
         print *, "Examples:"
@@ -38,6 +41,7 @@ program train_full_images
     tile_height = tile_width
     use_concatenate = .true.
     num_epochs = 10
+    batch_size = 8
 
     i = 2
     do while (i <= command_argument_count())
@@ -54,20 +58,24 @@ program train_full_images
             i = i + 1
             call get_command_argument(i, arg)
             read(arg, *) num_epochs
+        else if (trim(arg) == "--batch") then
+            i = i + 1
+            call get_command_argument(i, arg)
+            read(arg, *) batch_size
         end if
         i = i + 1
     end do
 
     training_dir = "images/training_data/"
-    batch_size = 8
 
     print *, "Tile size:", tile_width, "x", tile_height
     print *, "Epochs:", num_epochs
+    print *, "Batch size:", batch_size
 
     ! Get file count by listing directory to temp file
     call execute_command_line("ls " // trim(training_dir) // " > /tmp/image_list.txt")
 
-    ! Count images
+    ! Count images and store filenames
     num_images = 0
     open(newunit=unit_num, file="/tmp/image_list.txt", status="old")
     do
@@ -79,16 +87,21 @@ program train_full_images
 
     print *, "Found", num_images, "images"
 
-    ! Load first image to get dimensions
+    ! Store all filenames
+    allocate(filenames(num_images))
     open(newunit=unit_num, file="/tmp/image_list.txt", status="old")
-    read(unit_num, '(A)') filename
+    do k = 1, num_images
+        read(unit_num, '(A)') filenames(k)
+    end do
     close(unit_num)
 
-    img = load_image(trim(training_dir) // trim(filename))
+    ! Load first image to get dimensions
+    img = load_image(trim(training_dir) // trim(filenames(1)))
+    ! Image layout: (channels, height, width)
     channels = size(img, 1)
-    width = size(img, 2)
-    height = size(img, 3)
-    print *, "Image dimensions:", channels, "x", width, "x", height
+    height = size(img, 2)
+    width = size(img, 3)
+    print *, "Image dimensions:", channels, "x", height, "x", width
 
     ! Calculate tiles
     tiles_x = width / tile_width
@@ -98,25 +111,29 @@ program train_full_images
     print *, "Tiles per image:", tiles_per_image, "(", tiles_x, "x", tiles_y, ")"
     print *, "Total tiles:", total_tiles
 
-    ! Allocate tiles array
-    allocate(tiles(total_tiles, channels, tile_width, tile_height))
+    ! Allocate tiles array: (channels, tile_height, tile_width, total_tiles)
+    allocate(tiles(channels, tile_height, tile_width, total_tiles))
 
-    ! Load each image and extract tiles
-    idx = 1
-    open(newunit=unit_num, file="/tmp/image_list.txt", status="old")
+    ! Load each image and extract tiles (parallel)
+    print *, "Loading images..."
+    !$omp parallel do private(k, img, i, j, idx, base_idx) schedule(dynamic)
     do k = 1, num_images
-        read(unit_num, '(A)') filename
-        print *, "Loading:", trim(filename)
-        img = load_image(trim(training_dir) // trim(filename))
+        img = load_image(trim(training_dir) // trim(filenames(k)))
+        base_idx = (k - 1) * tiles_per_image
 
         do j = 1, tiles_y
             do i = 1, tiles_x
-                tiles(idx, :, :, :) = img(:, (i-1)*tile_width+1:i*tile_width, (j-1)*tile_height+1:j*tile_height)
-                idx = idx + 1
+                idx = base_idx + (j - 1) * tiles_x + i
+                ! img is (channels, height, width), tile is (channels, tile_height, tile_width)
+                tiles(:, :, :, idx) = img(:, (j-1)*tile_height+1:j*tile_height, (i-1)*tile_width+1:i*tile_width)
             end do
         end do
+
+        !$omp critical
+        print *, "Loaded:", trim(filenames(k))
+        !$omp end critical
     end do
-    close(unit_num)
+    !$omp end parallel do
 
     ! Create autoencoder
     config%input_channels = channels

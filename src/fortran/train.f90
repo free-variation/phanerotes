@@ -58,7 +58,8 @@ module train
             real :: total_loss, t_start, t_end
             character(len=256) :: checkpoint_file
 
-            num_samples = size(images, 1)
+            ! Layout: (channels, height, width, batch) - batch is dimension 4
+            num_samples = size(images, 4)
             num_batches = (num_samples + batch_size - 1) / batch_size
 
             do epoch = 1, num_epochs
@@ -70,10 +71,11 @@ module train
                     batch_end = min(batch_start + batch_size - 1, num_samples)
                     batch_num = batch_num + 1
 
-                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), dropout_rate, latent, output)
+                    ! Layout: (channels, height, width, batch)
+                    call autoencoder_forward(net, images(:,:,:,batch_start:batch_end), dropout_rate, latent, output)
 
-                    total_loss = total_loss + mse_loss(output, images(batch_start:batch_end,:,:,:))
-                    grad_loss = mse_loss_grad(output, images(batch_start:batch_end,:,:,:))
+                    total_loss = total_loss + mse_loss(output, images(:,:,:,batch_start:batch_end))
+                    grad_loss = mse_loss_grad(output, images(:,:,:,batch_start:batch_end))
                     call autoencoder_backward(net, output, grad_loss)
                     call sgd_update_all(net, learning_rate)
 

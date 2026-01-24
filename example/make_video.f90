@@ -80,10 +80,11 @@ program make_video
 
     print *, "Loading image..."
     img = load_image(trim(input_image))
+    ! Image layout: (channels, height, width)
     channels = size(img, 1)
-    width = size(img, 2)
-    height = size(img, 3)
-    print *, "Image size:", channels, "x", width, "x", height
+    height = size(img, 2)
+    width = size(img, 3)
+    print *, "Image size:", channels, "x", height, "x", width
 
     tiles_x = width / tile_size
     tiles_y = height / tile_size
@@ -100,10 +101,12 @@ program make_video
     print *, "Processing tiles..."
 
     ! First pass to get latent dimensions
-    allocate(tile(1, channels, tile_size, tile_size))
-    tile(1, :, :, :) = img(:, 1:tile_size, 1:tile_size)
+    ! Tile layout: (channels, tile_height, tile_width, batch)
+    allocate(tile(channels, tile_size, tile_size, 1))
+    tile(:, :, :, 1) = img(:, 1:tile_size, 1:tile_size)
     call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
-    latent_size = size(latent, 2) * size(latent, 3) * size(latent, 4)
+    ! Latent layout: (channels, h, w, batch)
+    latent_size = size(latent, 1) * size(latent, 2) * size(latent, 3)
 
     allocate(all_latents(num_tiles, size(latent,1), size(latent,2), size(latent,3), size(latent,4)))
     allocate(all_outputs(num_tiles, size(output,1), size(output,2), size(output,3), size(output,4)))
@@ -124,13 +127,14 @@ program make_video
         y_start = (j-1) * tile_size + 1
         y_end = j * tile_size
 
-        allocate(tile(1, channels, tile_size, tile_size))
-        tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
+        allocate(tile(channels, tile_size, tile_size, 1))
+        ! img is (channels, height, width), extract tile
+        tile(:, :, :, 1) = img(:, y_start:y_end, x_start:x_end)
         call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
 
         all_latents(n, :, :, :, :) = latent
         all_outputs(n, :, :, :, :) = output
-        latent_flat(n, :) = reshape(latent, [latent_size])
+        latent_flat(n, :) = reshape(latent(:,:,:,1), [latent_size])
         norms(n) = sqrt(sum(latent_flat(n, :)**2))
 
         if (interp_mode == 1) then
@@ -203,9 +207,10 @@ program make_video
 
         if (interp_mode == 0) then
             ! Pixel interpolation (fast)
+            ! Output layout: (channels, height, width, batch)
             allocate(frame(channels, tile_size, tile_size))
-            frame = (1.0 - t) * all_outputs(sequence(trans), 1, :, :, :) + &
-                    t * all_outputs(sequence(trans+1), 1, :, :, :)
+            frame = (1.0 - t) * all_outputs(sequence(trans), :, :, :, 1) + &
+                    t * all_outputs(sequence(trans+1), :, :, :, 1)
         else
             ! Latent space interpolation (smoother)
             call decode_latent_interpolated(net, &
@@ -215,7 +220,7 @@ program make_video
                 encoder_acts(sequence(trans+1), :), &
                 1.0 - t, output)
             allocate(frame(channels, tile_size, tile_size))
-            frame = output(1, :, :, :)
+            frame = output(:, :, :, 1)
         end if
 
         write(frame_file, '(A,I0.6,A)') "/tmp/video_frames/frame_", frame_num, ".bmp"

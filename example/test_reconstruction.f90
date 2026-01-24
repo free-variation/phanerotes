@@ -38,12 +38,13 @@ program test_reconstruction
     end do
 
     ! Load resized images
+    ! Layout: (channels, height, width, batch)
     print *, "Loading images..."
-    allocate(images(num_images, 3, img_size, img_size))
+    allocate(images(3, img_size, img_size, num_images))
     do i = 1, num_images
         write(resized_file, '(A,I0,A)') "images/test_input_", i, ".png"
         img = load_image(trim(resized_file))
-        images(i, :, :, :) = img
+        images(:, :, :, i) = img
     end do
 
     ! Test three modes: concat, add, add with no skip connections
@@ -84,9 +85,10 @@ program test_reconstruction
         call set_training(net, .false.)
 
         do i = 1, num_images
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
+            ! Input/output layout: (channels, height, width, batch)
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
             write(out_file, '(A,I0,A,A,A)') "images/test_output_", i, "_", trim(mode_name), ".bmp"
-            call save_image(trim(out_file), output(1,:,:,:), success)
+            call save_image(trim(out_file), output(:,:,:,1), success)
             print *, "  Saved:", trim(out_file)
         end do
     end do

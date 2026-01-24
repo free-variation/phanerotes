@@ -135,29 +135,31 @@ module cnn_autoencoder
        end subroutine
 
        pure function concatenate_channels(a, b)
-           real, intent(in) :: a(:, :,:,:), b(:, :,:,:)
-           real, allocatable :: concatenate_channels(:, :,:,:)
+           ! Layout: (channels, height, width, batch)
+           real, intent(in) :: a(:,:,:,:), b(:,:,:,:)
+           real, allocatable :: concatenate_channels(:,:,:,:)
            integer :: num_channels1, num_channels2
 
-           num_channels1 = size(a, 2)
-           num_channels2 = size(b, 2)
+           num_channels1 = size(a, 1)
+           num_channels2 = size(b, 1)
 
-           allocate(concatenate_channels(size(a, 1), num_channels1 + num_channels2, size(a, 3), size(a, 4)))
-           concatenate_channels(:, 1:num_channels1, :, :) = a
-           concatenate_channels(:, num_channels1 + 1:num_channels1 + num_channels2, :, :) = b
+           allocate(concatenate_channels(num_channels1 + num_channels2, size(a, 2), size(a, 3), size(a, 4)))
+           concatenate_channels(1:num_channels1, :, :, :) = a
+           concatenate_channels(num_channels1 + 1:num_channels1 + num_channels2, :, :, :) = b
        end function
 
        subroutine dropout_channels(a, dropout_rate, dropped_a, dropped_cache)
-           real, intent(in) :: a(:, :,:,:)
+           ! Layout: (channels, height, width, batch)
+           real, intent(in) :: a(:,:,:,:)
            real, intent(in) :: dropout_rate
-           real, intent(out), allocatable :: dropped_a(:, :,:,:)
+           real, intent(out), allocatable :: dropped_a(:,:,:,:)
            type(dropout_cache) :: dropped_cache
 
            real :: rand
            integer :: c, num_channels
            real :: scale
-    
-           num_channels = size(a, 2)
+
+           num_channels = size(a, 1)
 
            dropped_a = a
            if (dropout_rate == 0.0) then
@@ -167,13 +169,13 @@ module cnn_autoencoder
 
            scale = 1.0 / (1.0 - dropout_rate)
 
-           do c = 1, size(a, 2) ! number of channels
+           do c = 1, num_channels
                call random_number(rand)
                if (rand < dropout_rate) then
-                   dropped_a(:, c, :, :) = 0.0
+                   dropped_a(c, :, :, :) = 0.0
                    dropped_cache%dropout(c) = 0.0
                else
-                   dropped_a(:, c, :, :) = dropped_a(:, c, :, :) * scale
+                   dropped_a(c, :, :, :) = dropped_a(c, :, :, :) * scale
                    dropped_cache%dropout(c) = scale
                end if
            end do
@@ -238,12 +240,13 @@ module cnn_autoencoder
            output = sigmoid_forward(output)
        end subroutine
 
-       subroutine autoencoder_backward(net, output, grad_loss) 
+       subroutine autoencoder_backward(net, output, grad_loss)
+           ! Layout: (channels, height, width, batch)
            type(autoencoder), intent(inout) :: net
-           real, intent(in) :: output(:, :,:,:)
-           real, intent(in) :: grad_loss(:, :,:,:)
+           real, intent(in) :: output(:,:,:,:)
+           real, intent(in) :: grad_loss(:,:,:,:)
 
-           real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:), skip_grad(:, :,:,:)
+           real, allocatable :: grad_input(:,:,:,:), grad_output(:,:,:,:), skip_grad(:,:,:,:)
            type(tensor_cache), allocatable :: skip_gradients(:)
            integer :: i, c, num_skip_channels
 
@@ -260,19 +263,20 @@ module cnn_autoencoder
                if (net%config%concatenate) then
                    num_skip_channels = net%encoder(net%config%num_layers - i)%out_channels
 
-                   skip_gradients(i)%tensor = grad_input(:, size(grad_input, 2) - num_skip_channels + 1:, :, :)
-                   do c = 1, size(skip_gradients(i)%tensor, 2)
-                       skip_gradients(i)%tensor(:, c, :, :) = skip_gradients(i)%tensor(:, c, :, :) * &
+                   ! Channels is dimension 1
+                   skip_gradients(i)%tensor = grad_input(size(grad_input, 1) - num_skip_channels + 1:, :, :, :)
+                   do c = 1, size(skip_gradients(i)%tensor, 1)
+                       skip_gradients(i)%tensor(c, :, :, :) = skip_gradients(i)%tensor(c, :, :, :) * &
                            net%skip_dropout_cache(i)%dropout(c)
                    end do
 
-                   grad_input = grad_input(:, 1:size(grad_input, 2) - num_skip_channels, :, :) 
+                   grad_input = grad_input(1:size(grad_input, 1) - num_skip_channels, :, :, :)
                else
                    call conv_backward(net%skip_projection(i), grad_input, skip_grad)
 
                    skip_gradients(i)%tensor = skip_grad
-                   do c = 1, size(skip_gradients(i)%tensor, 2)
-                       skip_gradients(i)%tensor(:, c, :, :) = skip_gradients(i)%tensor(:, c, :, :) * &
+                   do c = 1, size(skip_gradients(i)%tensor, 1)
+                       skip_gradients(i)%tensor(c, :, :, :) = skip_gradients(i)%tensor(c, :, :, :) * &
                            net%skip_dropout_cache(i)%dropout(c)
                    end do
                end if
@@ -372,11 +376,12 @@ module cnn_autoencoder
        end function
 
        subroutine decode_latent(net, latent, output)
+           ! Layout: (channels, height, width, batch)
            type(autoencoder), intent(inout) :: net
-           real, intent(in) :: latent(:, :,:,:)
-           real, allocatable, intent(out) :: output(:, :,:,:)
+           real, intent(in) :: latent(:,:,:,:)
+           real, allocatable, intent(out) :: output(:,:,:,:)
 
-           real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:), padded_input(:, :,:,:)
+           real, allocatable :: layer_input(:,:,:,:), layer_output(:,:,:,:), padded_input(:,:,:,:)
            integer :: i, batch_size, decoder_channels, skip_channels, width, height
 
            layer_input = latent
@@ -384,15 +389,15 @@ module cnn_autoencoder
                layer_input = upsample(layer_input, net%config%stride)
 
                if (net%config%concatenate) then
-                   batch_size = size(layer_input, 1)
-                   decoder_channels = size(layer_input, 2)
+                   decoder_channels = size(layer_input, 1)
+                   height = size(layer_input, 2)
                    width = size(layer_input, 3)
-                   height = size(layer_input, 4)
+                   batch_size = size(layer_input, 4)
                    skip_channels = net%encoder(net%config%num_layers - i)%out_channels
 
-                   allocate(padded_input(batch_size, decoder_channels + skip_channels, width, height))
-                   padded_input(:, 1:decoder_channels, :, :) = layer_input
-                   padded_input(:, decoder_channels + 1:, :, :) = 0.0
+                   allocate(padded_input(decoder_channels + skip_channels, height, width, batch_size))
+                   padded_input(1:decoder_channels, :, :, :) = layer_input
+                   padded_input(decoder_channels + 1:, :, :, :) = 0.0
 
                    call conv_forward(net%decoder(i), padded_input, layer_output)
                    deallocate(padded_input)

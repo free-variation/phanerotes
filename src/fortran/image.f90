@@ -9,6 +9,7 @@ module image
     contains
 
         ! ---------- Image management ----------
+        ! 3D layout: (channels, height, width) to match 4D layout (channels, height, width, batch)
         function load_image(filename) result (pixels)
             character(*), intent(in) :: filename
             real, allocatable :: pixels(:, :, :)
@@ -16,6 +17,7 @@ module image
             type(c_ptr) :: pixels_c_ptr
             integer(c_int) :: width, height, channels
             integer(c_int8_t), pointer :: flat_pixels(:)
+            real, allocatable :: temp(:,:,:)
 
             pixels_c_ptr = stbi_load(trim(filename) // c_null_char, width, height, channels, 0)
             if (.not. c_associated(pixels_c_ptr)) then
@@ -24,26 +26,36 @@ module image
             end if
             call c_f_pointer(pixels_c_ptr, flat_pixels, [width * height * channels])
 
-            allocate(pixels(channels, width, height))
-            pixels = reshape(iand(int(flat_pixels), 255), [channels, width, height]) / 255.0
-
+            ! STB returns (channels, width, height), we want (channels, height, width)
+            allocate(temp(channels, width, height))
+            temp = reshape(iand(int(flat_pixels), 255), [channels, width, height]) / 255.0
             call stbi_image_free(pixels_c_ptr)
+
+            ! Transpose width and height
+            allocate(pixels(channels, height, width))
+            pixels = reshape(temp, shape=[channels, height, width], order=[1, 3, 2])
         end function
 
         subroutine save_image(filename, pixels, success)
+            ! Input layout: (channels, height, width)
             character(*), intent(in) :: filename
             real, intent(in) :: pixels(:, :, :)
             logical, intent(out) :: success
 
             integer(c_int8_t), allocatable, target :: flat_pixels(:)
             integer channels, width, height
+            real, allocatable :: temp(:,:,:)
 
             channels = size(pixels, 1)
-            width = size(pixels, 2)
-            height = size(pixels, 3)
+            height = size(pixels, 2)
+            width = size(pixels, 3)
+
+            ! Transpose back to (channels, width, height) for STB
+            allocate(temp(channels, width, height))
+            temp = reshape(pixels, shape=[channels, width, height], order=[1, 3, 2])
 
             allocate(flat_pixels(channels * width * height))
-            flat_pixels = reshape(int(pixels * 255.0, c_int8_t), [channels * width * height])
+            flat_pixels = reshape(int(temp * 255.0, c_int8_t), [channels * width * height])
 
             success = stbi_write_bmp(trim(filename) // c_null_char, width, height, channels, &
                                     c_loc(flat_pixels)) /= 0
@@ -53,6 +65,7 @@ module image
 
 
         ! ---------- Image transforms ----------
+        ! Layout: (channels, height, width)
         pure function transpose_image(pixels) result(pixels_out)
             real, intent(in) :: pixels(:, :, :)
             real, allocatable :: pixels_out(:, :, :)
@@ -60,10 +73,10 @@ module image
             integer :: channels, width, height
 
             channels = size(pixels, 1)
-            width = size(pixels, 2)
-            height = size(pixels, 3)
+            height = size(pixels, 2)
+            width = size(pixels, 3)
 
-            pixels_out = reshape(pixels, shape = [channels, height, width], order = [1, 3, 2])
+            pixels_out = reshape(pixels, shape = [channels, width, height], order = [1, 3, 2])
         end function
 
         pure function flip_image_horizontal(pixels) result(pixels_out)
@@ -72,18 +85,18 @@ module image
 
             integer :: width
 
-            width = size(pixels, 2)
-            pixels_out = pixels(:, width:1:-1, :)
+            width = size(pixels, 3)
+            pixels_out = pixels(:, :, width:1:-1)
         end function
-    
+
         pure function flip_image_vertical(pixels) result(pixels_out)
             real, intent(in) :: pixels(:, :, :)
             real, allocatable :: pixels_out(:, :, :)
 
             integer :: height
 
-            height = size(pixels, 3)
-            pixels_out = pixels(:, :, height:1:-1)
+            height = size(pixels, 2)
+            pixels_out = pixels(:, height:1:-1, :)
         end function
 
         pure function rotation_matrix(cx, cy, angle) result(M)
@@ -118,6 +131,7 @@ module image
         end function
 
         function affine_transform(pixels, M) result(out)
+            ! Layout: (channels, height, width)
             real, intent(in) :: pixels(:,:,:)
             real, intent(in) :: M(3,3)
             real, allocatable :: out(:, :, :)
@@ -131,35 +145,35 @@ module image
             integer :: x0, y0, x1, y1
 
             channels = size(pixels, 1)
-            width = size(pixels, 2)
-            height = size(pixels, 3)
+            height = size(pixels, 2)
+            width = size(pixels, 3)
 
-            allocate(out(channels, width, height))
-            allocate(grid_i(width, height), grid_j(width, height))
-            allocate(src_x(width, height), src_y(width, height))
+            allocate(out(channels, height, width))
+            allocate(grid_i(height, width), grid_j(height, width))
+            allocate(src_x(height, width), src_y(height, width))
 
-            ! build coordinate grids
-            do j = 1, height
-                grid_i(:, j) = [(real(i), i = 1, width)]
+            ! build coordinate grids (j=row/height, i=col/width)
+            do i = 1, width
+                grid_i(:, i) = [(real(j), j = 1, height)]
             end do
 
-            do i = 1, width
-                grid_j(i, :) = [(real(j), j = 1, height)]
+            do j = 1, height
+                grid_j(j, :) = [(real(i), i = 1, width)]
             end do
 
             M_inv = .inv. M
-            
+
             ! compute source coordinates
-            src_x = M_inv(1,1)*grid_i + M_inv(1,2)*grid_j + M_inv(1,3)
-            src_y = M_inv(2,1)*grid_i + M_inv(2,2)*grid_j + M_inv(2,3)
+            src_x = M_inv(1,1)*grid_j + M_inv(1,2)*grid_i + M_inv(1,3)
+            src_y = M_inv(2,1)*grid_j + M_inv(2,2)*grid_i + M_inv(2,3)
 
             ! bilinear interpolation with edge replicate
-            do concurrent (i = 1:width, j = 1:height)
-                fx = src_x(i, j)
-                fy = src_y(i, j)
+            do concurrent (j = 1:height, i = 1:width)
+                fx = src_x(j, i)
+                fy = src_y(j, i)
 
                 x0 = floor(fx); x1 = x0 + 1
-                y0 = floor(fy); y1 = y0 +1
+                y0 = floor(fy); y1 = y0 + 1
                 dx = fx - x0; dy = fy - y0
 
                 x0 = max(1, min(x0, width))
@@ -167,10 +181,10 @@ module image
                 y0 = max(1, min(y0, height))
                 y1 = max(1, min(y1, height))
 
-                out(:, i, j) = (1-dx)*(1-dy)*pixels(:, x0, y0) &
-                     +    dx *(1-dy)*pixels(:, x1, y0) &
-                     + (1-dx)*   dy *pixels(:, x0, y1) &
-                     +    dx *   dy *pixels(:, x1, y1)
+                out(:, j, i) = (1-dx)*(1-dy)*pixels(:, y0, x0) &
+                     +    dx *(1-dy)*pixels(:, y0, x1) &
+                     + (1-dx)*   dy *pixels(:, y1, x0) &
+                     +    dx *   dy *pixels(:, y1, x1)
 
              end do
          end function

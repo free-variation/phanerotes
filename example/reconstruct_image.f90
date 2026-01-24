@@ -21,16 +21,17 @@ program reconstruct_image
 
     print *, "Loading image..."
     img = load_image("images/training_data/DSCF6922.jpg")
+    ! Image layout: (channels, height, width)
     channels = size(img, 1)
-    width = size(img, 2)
-    height = size(img, 3)
-    print *, "Image size:", channels, "x", width, "x", height
+    height = size(img, 2)
+    width = size(img, 3)
+    print *, "Image size:", channels, "x", height, "x", width
 
     tiles_x = width / tile_size
     tiles_y = height / tile_size
     print *, "Tiles:", tiles_x, "x", tiles_y, "=", tiles_x * tiles_y
 
-    allocate(reconstructed(channels, tiles_x * tile_size, tiles_y * tile_size))
+    allocate(reconstructed(channels, tiles_y * tile_size, tiles_x * tile_size))
     total_tiles = tiles_x * tiles_y
 
     !$omp parallel do private(n, i, j, x_start, x_end, y_start, y_end, tile, latent, output) schedule(dynamic)
@@ -43,10 +44,11 @@ program reconstruct_image
         y_start = (j-1) * tile_size + 1
         y_end = j * tile_size
 
-        allocate(tile(1, channels, tile_size, tile_size))
-        tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
+        ! Tile layout: (channels, height, width, batch)
+        allocate(tile(channels, tile_size, tile_size, 1))
+        tile(:, :, :, 1) = img(:, y_start:y_end, x_start:x_end)
         call autoencoder_forward(net, tile, 0.0, latent, output)
-        reconstructed(:, x_start:x_end, y_start:y_end) = output(1, :, :, :)
+        reconstructed(:, y_start:y_end, x_start:x_end) = output(:, :, :, 1)
         deallocate(tile)
 
         !$omp critical

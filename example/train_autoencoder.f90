@@ -17,10 +17,11 @@ program train_autoencoder
     ! Load image
     print *, "Loading image..."
     img = load_image("images/test1.jpg")
+    ! Image layout: (channels, height, width)
     channels = size(img, 1)
-    width = size(img, 2)
-    height = size(img, 3)
-    print *, "Image size:", channels, "x", width, "x", height
+    height = size(img, 2)
+    width = size(img, 3)
+    print *, "Image size:", channels, "x", height, "x", width
 
     ! Chop into tiles
     tile_size = 32
@@ -29,11 +30,12 @@ program train_autoencoder
     num_tiles = tiles_x * tiles_y
     print *, "Creating", num_tiles, "tiles of size", tile_size
 
-    allocate(tiles(num_tiles, channels, tile_size, tile_size))
+    ! Tiles layout: (channels, tile_height, tile_width, num_tiles)
+    allocate(tiles(channels, tile_size, tile_size, num_tiles))
     idx = 1
     do j = 1, tiles_y
         do i = 1, tiles_x
-            tiles(idx, :, :, :) = img(:, (i-1)*tile_size+1:i*tile_size, (j-1)*tile_size+1:j*tile_size)
+            tiles(:, :, :, idx) = img(:, (j-1)*tile_size+1:j*tile_size, (i-1)*tile_size+1:i*tile_size)
             idx = idx + 1
         end do
     end do
