@@ -145,9 +145,7 @@ module cnn_core
             out_height = (size(input, 4) + 2*layer%padding - layer%kernel_height) / layer%stride + 1
 
             ! Bias is per output channel, broadcast across all spatial positions
-            do b = 1, n
-                output_matrix(:, b) = output_matrix(:, b) + layer%bias
-            end do
+            output_matrix = output_matrix + spread(layer%bias, 2, n)
 
             ! Reshape to 4D: extract each batch's columns separately
             allocate(output(batch_size, layer%out_channels, out_width, out_height))

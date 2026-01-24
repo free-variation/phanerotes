@@ -16,12 +16,8 @@ module cnn_autoencoder
         logical :: concatenate      ! whether skip connections are concatenated or summed
     end type
 
-    type :: activation_cache
-        real, allocatable :: activations(:, :,:,:)
-    end type
-
-    type :: gradient_cache
-        real, allocatable :: gradients(:, :,:,:)
+    type :: tensor_cache
+        real, allocatable :: tensor(:, :,:,:)
     end type
 
     type :: dropout_cache
@@ -34,16 +30,16 @@ module cnn_autoencoder
         type(conv_layer), allocatable :: decoder(:)
         type(conv_layer), allocatable :: skip_projection(:)
 
-        type(activation_cache), allocatable :: encoder_cache(:)
-        type(activation_cache), allocatable :: decoder_cache(:)
+        type(tensor_cache), allocatable :: encoder_preact(:)
+        type(tensor_cache), allocatable :: decoder_preact(:)
         type(dropout_cache), allocatable :: skip_dropout_cache(:)
     end type
 
     contains
-        subroutine init_layer(layer, config, in_channels, out_channels, stride)
-            type(conv_layer), intent(inout) :: layer
+        function init_layer(config, in_channels, out_channels, stride) result(layer)
             type(autoencoder_config), intent(in) :: config
             integer, intent(in) :: in_channels, out_channels, stride
+            type(conv_layer) :: layer
             real :: scale
 
             layer%in_channels = in_channels
@@ -67,7 +63,7 @@ module cnn_autoencoder
             layer%weights = (layer%weights - 0.5) * 2.0 * scale
 
             layer%training = .true.
-        end subroutine
+        end function
 
 
         function autoencoder_init(config) result(net)
@@ -81,8 +77,8 @@ module cnn_autoencoder
 
             allocate(net%encoder(config%num_layers))
             allocate(net%decoder(config%num_layers))
-            allocate(net%encoder_cache(config%num_layers))
-            allocate(net%decoder_cache(config%num_layers))
+            allocate(net%encoder_preact(config%num_layers))
+            allocate(net%decoder_preact(config%num_layers))
             
             allocate(net%skip_projection(config%num_layers - 1))
             allocate(net%skip_dropout_cache(config%num_layers - 1))
@@ -95,7 +91,7 @@ module cnn_autoencoder
                 end if
                 out_channels = min(config%base_channels * 2**i, config%max_channels)
                 
-                call init_layer(net%encoder(i), config, in_channels, out_channels, config%stride)
+                net%encoder(i) = init_layer(config, in_channels, out_channels, config%stride)
             end do
 
             do i = 1, config%num_layers
@@ -105,7 +101,7 @@ module cnn_autoencoder
                 end if
                 out_channels = net%encoder(config%num_layers - i + 1)%in_channels
 
-                call init_layer(net%decoder(i), config, in_channels, out_channels, 1)
+                net%decoder(i) = init_layer(config, in_channels, out_channels, 1)
             end do
 
             config_1x1 = config
@@ -117,7 +113,7 @@ module cnn_autoencoder
                 in_channels = net%encoder(config%num_layers - i)%out_channels
                 out_channels = net%decoder(i)%in_channels
 
-                call init_layer(net%skip_projection(i), config_1x1, in_channels, out_channels, 1)
+                net%skip_projection(i) = init_layer(config_1x1, in_channels, out_channels, 1)
                 allocate(net%skip_dropout_cache(i)%dropout(in_channels))
             end do
         end function
@@ -189,10 +185,10 @@ module cnn_autoencoder
            real, intent(in) :: input(:, :,:,:)
            real, allocatable, intent(out) :: latent(:, :,:,:)
            real, allocatable, intent(out) :: output(:, :,:,:)
-           type(activation_cache), allocatable, intent(out), optional :: encoder_acts_out(:)
+           type(tensor_cache), allocatable, intent(out), optional :: encoder_acts_out(:)
 
            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
-           type(activation_cache), allocatable :: encoder_activations(:)
+           type(tensor_cache), allocatable :: encoder_activations(:)
            real, allocatable :: skip_input(:, :,:,:), skip_output(:, :,:,:), aggregated_input(:, :,:,:)
            integer :: i
 
@@ -201,10 +197,10 @@ module cnn_autoencoder
            layer_input = input
            do i = 1, net%config%num_layers
                call conv_forward(net%encoder(i), layer_input, layer_output)
-               if (net%encoder(i)%training) net%encoder_cache(i)%activations = layer_output
+               if (net%encoder(i)%training) net%encoder_preact(i)%tensor = layer_output
 
                layer_output = relu_forward(layer_output)
-               if (i < net%config%num_layers) encoder_activations(i)%activations = layer_output
+               if (i < net%config%num_layers) encoder_activations(i)%tensor = layer_output
 
                layer_input = layer_output
            end do
@@ -217,10 +213,10 @@ module cnn_autoencoder
                layer_input = upsample(layer_input, net%config%stride)
 
                if (dropout_rate > 0.0) then
-                   call dropout_channels(encoder_activations(net%config%num_layers - i)%activations, dropout_rate, &
+                   call dropout_channels(encoder_activations(net%config%num_layers - i)%tensor, dropout_rate, &
                        skip_input, net%skip_dropout_cache(i))
                else
-                   skip_input = encoder_activations(net%config%num_layers - i)%activations
+                   skip_input = encoder_activations(net%config%num_layers - i)%tensor
                end if
 
                if (net%config%concatenate) then
@@ -231,7 +227,7 @@ module cnn_autoencoder
                end if
 
                call conv_forward(net%decoder(i), aggregated_input, layer_output)
-               if (net%decoder(i)%training) net%decoder_cache(i)%activations = layer_output
+               if (net%decoder(i)%training) net%decoder_preact(i)%tensor = layer_output
                layer_output = relu_forward(layer_output)
 
                layer_input = layer_output
@@ -248,7 +244,7 @@ module cnn_autoencoder
            real, intent(in) :: grad_loss(:, :,:,:)
 
            real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:), skip_grad(:, :,:,:)
-           type(gradient_cache), allocatable :: skip_gradients(:)
+           type(tensor_cache), allocatable :: skip_gradients(:)
            integer :: i, c, num_skip_channels
 
            allocate(skip_gradients(net%config%num_layers - 1))
@@ -257,16 +253,16 @@ module cnn_autoencoder
            call conv_backward(net%decoder(net%config%num_layers), grad_output, grad_input)
            do i = net%config%num_layers - 1, 1, -1
                grad_output = upsample_backward(grad_input, net%config%stride)
-               grad_output = relu_backward(net%decoder_cache(i)%activations, grad_output)
+               grad_output = relu_backward(net%decoder_preact(i)%tensor, grad_output)
 
                call conv_backward(net%decoder(i), grad_output, grad_input)
 
                if (net%config%concatenate) then
                    num_skip_channels = net%encoder(net%config%num_layers - i)%out_channels
 
-                   skip_gradients(i)%gradients = grad_input(:, size(grad_input, 2) - num_skip_channels + 1:, :, :)
-                   do c = 1, size(skip_gradients(i)%gradients, 2)
-                       skip_gradients(i)%gradients(:, c, :, :) = skip_gradients(i)%gradients(:, c, :, :) * &
+                   skip_gradients(i)%tensor = grad_input(:, size(grad_input, 2) - num_skip_channels + 1:, :, :)
+                   do c = 1, size(skip_gradients(i)%tensor, 2)
+                       skip_gradients(i)%tensor(:, c, :, :) = skip_gradients(i)%tensor(:, c, :, :) * &
                            net%skip_dropout_cache(i)%dropout(c)
                    end do
 
@@ -274,9 +270,9 @@ module cnn_autoencoder
                else
                    call conv_backward(net%skip_projection(i), grad_input, skip_grad)
 
-                   skip_gradients(i)%gradients = skip_grad
-                   do c = 1, size(skip_gradients(i)%gradients, 2)
-                       skip_gradients(i)%gradients(:, c, :, :) = skip_gradients(i)%gradients(:, c, :, :) * &
+                   skip_gradients(i)%tensor = skip_grad
+                   do c = 1, size(skip_gradients(i)%tensor, 2)
+                       skip_gradients(i)%tensor(:, c, :, :) = skip_gradients(i)%tensor(:, c, :, :) * &
                            net%skip_dropout_cache(i)%dropout(c)
                    end do
                end if
@@ -286,9 +282,9 @@ module cnn_autoencoder
 
            do i = net%config%num_layers, 1, -1
                if (i < net%config%num_layers) then
-                   grad_input = grad_input + skip_gradients(net%config%num_layers - i)%gradients
+                   grad_input = grad_input + skip_gradients(net%config%num_layers - i)%tensor
                end if
-               grad_output = relu_backward(net%encoder_cache(i)%activations, grad_input)
+               grad_output = relu_backward(net%encoder_preact(i)%tensor, grad_input)
                call conv_backward(net%encoder(i), grad_output, grad_input)
            end do
        end subroutine
@@ -417,7 +413,7 @@ module cnn_autoencoder
                encoder_acts_a, encoder_acts_b, alpha, output)
            type(autoencoder), intent(inout) :: net
            real, intent(in) :: latent_a(:, :,:,:), latent_b(:, :,:,:)
-           type(activation_cache), intent(in) :: encoder_acts_a(:), encoder_acts_b(:)
+           type(tensor_cache), intent(in) :: encoder_acts_a(:), encoder_acts_b(:)
            real, intent(in) :: alpha
            real, allocatable, intent(out) :: output(:, :,:,:)
 
@@ -432,8 +428,8 @@ module cnn_autoencoder
                layer_input = upsample(layer_input, net%config%stride)
 
                skip_idx = net%config%num_layers - i
-               skip_interp = alpha * encoder_acts_a(skip_idx)%activations + &
-                   (1.0 - alpha) * encoder_acts_b(skip_idx)%activations
+               skip_interp = alpha * encoder_acts_a(skip_idx)%tensor + &
+                   (1.0 - alpha) * encoder_acts_b(skip_idx)%tensor
 
                if (net%config%concatenate) then
                    aggregated_input = concatenate_channels(layer_input, skip_interp)

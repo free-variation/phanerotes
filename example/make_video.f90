@@ -13,8 +13,8 @@ program make_video
     real, allocatable :: norms(:)
     integer, allocatable :: sequence(:)
     logical, allocatable :: used(:)
-    type(activation_cache), allocatable :: encoder_acts(:)
-    type(activation_cache), allocatable :: all_encoder_acts(:,:)  ! (num_tiles, num_layers-1)
+    type(tensor_cache), allocatable :: tile_acts(:)       ! temporary, one tile
+    type(tensor_cache), allocatable :: encoder_acts(:,:)  ! (num_tiles, num_layers-1)
 
     integer :: width, height, channels
     integer :: tile_size, i, j, n, tiles_x, tiles_y, num_tiles
@@ -102,7 +102,7 @@ program make_video
     ! First pass to get latent dimensions
     allocate(tile(1, channels, tile_size, tile_size))
     tile(1, :, :, :) = img(:, 1:tile_size, 1:tile_size)
-    call autoencoder_forward(net, tile, 0.0, latent, output, encoder_acts)
+    call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
     latent_size = size(latent, 2) * size(latent, 3) * size(latent, 4)
 
     allocate(all_latents(num_tiles, size(latent,1), size(latent,2), size(latent,3), size(latent,4)))
@@ -110,11 +110,11 @@ program make_video
     allocate(latent_flat(num_tiles, latent_size))
     allocate(norms(num_tiles))
     if (interp_mode == 1) then
-        allocate(all_encoder_acts(num_tiles, net%config%num_layers - 1))
+        allocate(encoder_acts(num_tiles, net%config%num_layers - 1))
     end if
     deallocate(tile)
 
-    !$omp parallel do private(n, i, j, k, x_start, x_end, y_start, y_end, tile, latent, output, encoder_acts) schedule(dynamic)
+    !$omp parallel do private(n, i, j, k, x_start, x_end, y_start, y_end, tile, latent, output, tile_acts) schedule(dynamic)
     do n = 1, num_tiles
         i = mod(n - 1, tiles_x) + 1
         j = (n - 1) / tiles_x + 1
@@ -126,7 +126,7 @@ program make_video
 
         allocate(tile(1, channels, tile_size, tile_size))
         tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
-        call autoencoder_forward(net, tile, 0.0, latent, output, encoder_acts)
+        call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
 
         all_latents(n, :, :, :, :) = latent
         all_outputs(n, :, :, :, :) = output
@@ -135,7 +135,7 @@ program make_video
 
         if (interp_mode == 1) then
             do k = 1, net%config%num_layers - 1
-                all_encoder_acts(n, k)%activations = encoder_acts(k)%activations
+                encoder_acts(n, k)%tensor = tile_acts(k)%tensor
             end do
         end if
 
@@ -211,8 +211,8 @@ program make_video
             call decode_latent_interpolated(net, &
                 all_latents(sequence(trans), :, :, :, :), &
                 all_latents(sequence(trans+1), :, :, :, :), &
-                all_encoder_acts(sequence(trans), :), &
-                all_encoder_acts(sequence(trans+1), :), &
+                encoder_acts(sequence(trans), :), &
+                encoder_acts(sequence(trans+1), :), &
                 1.0 - t, output)
             allocate(frame(channels, tile_size, tile_size))
             frame = output(1, :, :, :)
