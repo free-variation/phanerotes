@@ -10,28 +10,30 @@ program test_reconstruction
     real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
     character(len=256) :: resized_file, out_file, cmd
     character(len=64) :: src_files(4)
-    integer :: i, img_size, num_images, num_epochs, mode
+    integer :: i, img_width, img_height, num_images, num_epochs, mode
     logical :: use_concatenate, success
     real :: dropout_rate
     character(len=16) :: mode_name
-    character(len=8) :: size_str
+    character(len=8) :: width_str, height_str
 
     src_files(1) = "images/training_data/DSCF6833.JPG"
     src_files(2) = "images/training_data/DSCF6949.jpg"
     src_files(3) = "images/training_data/DSCF6974.jpg"
     src_files(4) = "images/training_data/P2050076.jpg"
 
-    img_size = 128
+    img_width = 192
+    img_height = 128
     num_images = 4
     num_epochs = 200
 
-    write(size_str, '(I0)') img_size
+    write(width_str, '(I0)') img_width
+    write(height_str, '(I0)') img_height
 
     ! Resize images using sips
-    print *, "Resizing images to", img_size, "x", img_size
+    print *, "Resizing images to", img_width, "x", img_height
     do i = 1, num_images
         write(resized_file, '(A,I0,A)') "images/test_input_", i, ".png"
-        cmd = "sips -z " // trim(size_str) // " " // trim(size_str) // &
+        cmd = "sips -z " // trim(height_str) // " " // trim(width_str) // &
               " " // trim(src_files(i)) // " --out " // trim(resized_file) // " >/dev/null 2>&1"
         call execute_command_line(trim(cmd))
         print *, "  ", trim(resized_file)
@@ -40,7 +42,7 @@ program test_reconstruction
     ! Load resized images
     ! Layout: (channels, height, width, batch)
     print *, "Loading images..."
-    allocate(images(3, img_size, img_size, num_images))
+    allocate(images(3, img_height, img_width, num_images))
     do i = 1, num_images
         write(resized_file, '(A,I0,A)') "images/test_input_", i, ".png"
         img = load_image(trim(resized_file))
@@ -88,6 +90,22 @@ program test_reconstruction
             ! Input/output layout: (channels, height, width, batch)
             call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
             write(out_file, '(A,I0,A,A,A)') "images/test_output_", i, "_", trim(mode_name), ".bmp"
+            call save_image(trim(out_file), output(:,:,:,1), success)
+            print *, "  Saved:", trim(out_file)
+        end do
+
+        ! Save and reload model, then reconstruct again
+        print *, "Saving model..."
+        call save_autoencoder(net, "test_model_" // trim(mode_name) // ".bin")
+
+        print *, "Reloading model..."
+        net = load_autoencoder("test_model_" // trim(mode_name) // ".bin")
+        call set_training(net, .false.)
+
+        print *, "Generating reconstructions from reloaded model..."
+        do i = 1, num_images
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            write(out_file, '(A,I0,A,A,A)') "images/test_output_", i, "_", trim(mode_name), "_reloaded.bmp"
             call save_image(trim(out_file), output(:,:,:,1), success)
             print *, "  Saved:", trim(out_file)
         end do

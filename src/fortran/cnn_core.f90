@@ -148,12 +148,13 @@ module cnn_core
             output_matrix = output_matrix + spread(layer%bias, 2, n)
 
             ! Reshape to 4D: (channels, height, width, batch)
+            ! im2col orders columns with width varying fastest, so use order=[1,3,2]
             allocate(output(layer%out_channels, out_height, out_width, batch_size))
             do b = 1, batch_size
                 col_start = (b-1)*out_width*out_height + 1
                 col_end = b*out_width*out_height
                 output(:, :, :, b) = reshape(output_matrix(:, col_start:col_end), &
-                                              [layer%out_channels, out_height, out_width])
+                                              [layer%out_channels, out_height, out_width], order=[1,3,2])
             end do
 
             ! Cache for backward pass: need original input layout and its column form
@@ -187,8 +188,10 @@ module cnn_core
             do b = 1, batch_size
                 col_start = (b-1)*out_width*out_height + 1
                 col_end = b*out_width*out_height
-                G(:, col_start:col_end) = reshape(grad_output(:, :, :, b), &
-                                                   [out_channels, out_height*out_width])
+                ! Match im2col's width-fastest ordering: transpose h/w then flatten
+                G(:, col_start:col_end) = reshape( &
+                    reshape(grad_output(:, :, :, b), [out_channels, out_width, out_height], order=[1,3,2]), &
+                    [out_channels, out_width*out_height])
             end do
             k = layer%in_channels * layer%kernel_width * layer%kernel_height
             n = out_width * out_height * batch_size
