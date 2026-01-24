@@ -215,12 +215,17 @@ module cnn_autoencoder
 
            do i = 1, net%config%num_layers - 1
                layer_input = upsample(layer_input, net%config%stride)
-               call dropout_channels(encoder_activations(net%config%num_layers - i)%activations, dropout_rate, &
-                   skip_input, net%skip_dropout_cache(i))
+
+               if (dropout_rate > 0.0) then
+                   call dropout_channels(encoder_activations(net%config%num_layers - i)%activations, dropout_rate, &
+                       skip_input, net%skip_dropout_cache(i))
+               else
+                   skip_input = encoder_activations(net%config%num_layers - i)%activations
+               end if
 
                if (net%config%concatenate) then
                    aggregated_input = concatenate_channels(layer_input, skip_input)
-               else 
+               else
                    call conv_forward(net%skip_projection(i), skip_input, skip_output)
                    aggregated_input = layer_input + skip_output
                end if
