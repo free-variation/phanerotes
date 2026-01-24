@@ -13,11 +13,13 @@ program make_video
     real, allocatable :: norms(:)
     integer, allocatable :: sequence(:)
     logical, allocatable :: used(:)
+    type(activation_cache), allocatable :: encoder_acts(:)
+    type(activation_cache), allocatable :: all_encoder_acts(:,:)  ! (num_tiles, num_layers-1)
 
     integer :: width, height, channels
     integer :: tile_size, i, j, n, tiles_x, tiles_y, num_tiles
     integer :: x_start, x_end, y_start, y_end
-    integer :: latent_size, current, best_next
+    integer :: latent_size, current, best_next, k
     real :: best_sim, sim
 
     ! Video parameters
@@ -25,9 +27,10 @@ program make_video
     integer :: frame_num, trans, f
     real :: t
     real, allocatable :: frame(:,:,:)
-    character(len=256) :: frame_file, cmd, input_image, output_video, sharpen_arg
+    character(len=256) :: frame_file, cmd, input_image, output_video, model_file, arg
     logical :: success
-    integer :: sharpen_mode  ! 0=none, 1=sharpen
+    integer :: sharpen_mode   ! 0=none, 1=sharpen
+    integer :: interp_mode    ! 0=pixel, 1=latent
 
     tile_size = 512
     fps = 24
@@ -35,34 +38,44 @@ program make_video
     total_frames = fps * duration  ! 7200 frames
 
     ! Parse arguments
-    if (command_argument_count() < 1) then
-        print *, "Usage: make_video <image_file> [none|sharpen]"
-        print *, "  none   - no sharpening"
-        print *, "  sharpen - apply sharpening (default)"
+    if (command_argument_count() < 2) then
+        print *, "Usage: make_video <model_file> <image_file> [options]"
+        print *, "Options:"
+        print *, "  --sharpen    - apply sharpening (default)"
+        print *, "  --no-sharpen - no sharpening"
+        print *, "  --pixel      - interpolate pixels (default, fast)"
+        print *, "  --latent     - interpolate in latent space (slower, smoother)"
         stop 1
     end if
 
-    call get_command_argument(1, input_image)
+    call get_command_argument(1, model_file)
+    call get_command_argument(2, input_image)
     output_video = "video_1024.mp4"
 
     sharpen_mode = 1  ! default: sharpen
-    if (command_argument_count() >= 2) then
-        call get_command_argument(2, sharpen_arg)
-        if (trim(sharpen_arg) == "none") then
-            sharpen_mode = 0
-        end if
-    end if
+    interp_mode = 0   ! default: pixel interpolation
 
+    do i = 3, command_argument_count()
+        call get_command_argument(i, arg)
+        if (trim(arg) == "--no-sharpen") then
+            sharpen_mode = 0
+        else if (trim(arg) == "--sharpen") then
+            sharpen_mode = 1
+        else if (trim(arg) == "--pixel") then
+            interp_mode = 0
+        else if (trim(arg) == "--latent") then
+            interp_mode = 1
+        end if
+    end do
+
+    print *, "Model:", trim(model_file)
     print *, "Input:", trim(input_image)
     print *, "Output:", trim(output_video)
-    if (sharpen_mode == 0) then
-        print *, "Sharpening: none"
-    else
-        print *, "Sharpening: enabled"
-    end if
+    print *, "Sharpening:", merge("enabled ", "disabled", sharpen_mode == 1)
+    print *, "Interpolation:", merge("latent", "pixel ", interp_mode == 1)
 
     print *, "Loading autoencoder..."
-    net = load_autoencoder("ae-weights-576x384.bin")
+    net = load_autoencoder(trim(model_file))
     call set_training(net, .false.)
 
     print *, "Loading image..."
@@ -89,16 +102,19 @@ program make_video
     ! First pass to get latent dimensions
     allocate(tile(1, channels, tile_size, tile_size))
     tile(1, :, :, :) = img(:, 1:tile_size, 1:tile_size)
-    call autoencoder_forward(net, tile, 0.0, latent, output)
+    call autoencoder_forward(net, tile, 0.0, latent, output, encoder_acts)
     latent_size = size(latent, 2) * size(latent, 3) * size(latent, 4)
 
     allocate(all_latents(num_tiles, size(latent,1), size(latent,2), size(latent,3), size(latent,4)))
     allocate(all_outputs(num_tiles, size(output,1), size(output,2), size(output,3), size(output,4)))
     allocate(latent_flat(num_tiles, latent_size))
     allocate(norms(num_tiles))
+    if (interp_mode == 1) then
+        allocate(all_encoder_acts(num_tiles, net%config%num_layers - 1))
+    end if
     deallocate(tile)
 
-    !$omp parallel do private(n, i, j, x_start, x_end, y_start, y_end, tile, latent, output) schedule(dynamic)
+    !$omp parallel do private(n, i, j, k, x_start, x_end, y_start, y_end, tile, latent, output, encoder_acts) schedule(dynamic)
     do n = 1, num_tiles
         i = mod(n - 1, tiles_x) + 1
         j = (n - 1) / tiles_x + 1
@@ -110,12 +126,19 @@ program make_video
 
         allocate(tile(1, channels, tile_size, tile_size))
         tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
-        call autoencoder_forward(net, tile, 0.0, latent, output)
+        call autoencoder_forward(net, tile, 0.0, latent, output, encoder_acts)
 
         all_latents(n, :, :, :, :) = latent
         all_outputs(n, :, :, :, :) = output
         latent_flat(n, :) = reshape(latent, [latent_size])
         norms(n) = sqrt(sum(latent_flat(n, :)**2))
+
+        if (interp_mode == 1) then
+            do k = 1, net%config%num_layers - 1
+                all_encoder_acts(n, k)%activations = encoder_acts(k)%activations
+            end do
+        end if
+
         deallocate(tile)
 
         !$omp critical
@@ -165,7 +188,7 @@ program make_video
     ! Interpolate from pair (trans, trans+1) to pair (trans+1, trans+2)
     print *, "Generating frames..."
 
-    !$omp parallel do private(frame_num, trans, f, t, frame, frame_file, success) schedule(dynamic)
+    !$omp parallel do private(frame_num, trans, f, t, frame, frame_file, success, output) schedule(dynamic)
     do frame_num = 1, total_frames
         ! Compute which transition and position within transition
         trans = (frame_num - 1) / frames_per_transition + 1
@@ -178,10 +201,22 @@ program make_video
 
         t = real(f) / real(frames_per_transition)
 
-        ! Interpolate between consecutive tiles (512x512)
-        allocate(frame(channels, tile_size, tile_size))
-        frame = (1.0 - t) * all_outputs(sequence(trans), 1, :, :, :) + &
-                t * all_outputs(sequence(trans+1), 1, :, :, :)
+        if (interp_mode == 0) then
+            ! Pixel interpolation (fast)
+            allocate(frame(channels, tile_size, tile_size))
+            frame = (1.0 - t) * all_outputs(sequence(trans), 1, :, :, :) + &
+                    t * all_outputs(sequence(trans+1), 1, :, :, :)
+        else
+            ! Latent space interpolation (smoother)
+            call decode_latent_interpolated(net, &
+                all_latents(sequence(trans), :, :, :, :), &
+                all_latents(sequence(trans+1), :, :, :, :), &
+                all_encoder_acts(sequence(trans), :), &
+                all_encoder_acts(sequence(trans+1), :), &
+                1.0 - t, output)
+            allocate(frame(channels, tile_size, tile_size))
+            frame = output(1, :, :, :)
+        end if
 
         write(frame_file, '(A,I0.6,A)') "/tmp/video_frames/frame_", frame_num, ".bmp"
         call save_image(trim(frame_file), frame, success)
