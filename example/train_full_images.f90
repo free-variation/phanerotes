@@ -108,7 +108,7 @@ program train_full_images
 
     ! Train
     print *, "Training..."
-    call train_network(net, tiles, batch_size, 10, 0.01)
+    call train_network(net, tiles, batch_size, 10, 0.01, 0.2)
 
     write(filename, '(A,I0,A,I0,A)') "ae-weights-", tile_width, "x", tile_height, ".bin"
     call save_weights(net, trim(filename))

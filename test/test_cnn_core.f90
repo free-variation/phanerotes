@@ -57,6 +57,7 @@ program test_cnn_core
     call test_autoencoder_forward_dimensions()
     call test_autoencoder_forward_output_range()
     call test_autoencoder_forward_batched()
+    call test_autoencoder_forward_dropout()
 
     ! autoencoder backward tests
     call test_autoencoder_backward_numerical()
@@ -1300,7 +1301,7 @@ contains
         allocate(input(1, 3, 32, 32))
         call random_number(input)
 
-        call autoencoder_forward(net, input, latent, output)
+        call autoencoder_forward(net, input, 0.0, latent, output)
 
         ! Latent should be (1, max_channels, 4, 4) after 3 stride-2 downsamples
         if (size(latent, 1) /= 1 .or. size(latent, 2) /= 256 .or. &
@@ -1341,7 +1342,7 @@ contains
         allocate(input(1, 1, 16, 16))
         call random_number(input)
 
-        call autoencoder_forward(net, input, latent, output)
+        call autoencoder_forward(net, input, 0.0, latent, output)
 
         ! Output should be in [0, 1] due to sigmoid
         min_val = minval(output)
@@ -1378,7 +1379,7 @@ contains
         call random_number(input)
         call random_number(target)
 
-        call autoencoder_forward(net, input, latent, output)
+        call autoencoder_forward(net, input, 0.0, latent, output)
 
         allocate(grad_loss, mold=output)
         grad_loss = 2.0 * (output - target) / size(output)
@@ -1397,6 +1398,40 @@ contains
         end if
 
         print *, "PASS: autoencoder_backward produces gradients"
+    end subroutine
+
+    subroutine test_autoencoder_forward_dropout()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+        real, allocatable :: input(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
+
+        config%input_channels = 3
+        config%num_layers = 2
+        config%base_channels = 16
+        config%max_channels = 64
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+
+        net = autoencoder_init(config)
+
+        allocate(input(2, 3, 16, 16))
+        call random_number(input)
+
+        call autoencoder_forward(net, input, 0.5, latent, output)
+
+        if (size(output, 1) /= 2 .or. size(output, 2) /= 3) then
+            print *, "FAIL: autoencoder_forward_dropout output shape wrong"
+            error stop
+        end if
+
+        if (any(output < 0.0) .or. any(output > 1.0)) then
+            print *, "FAIL: autoencoder_forward_dropout output out of range"
+            error stop
+        end if
+
+        print *, "PASS: autoencoder_forward with dropout"
     end subroutine
 
     subroutine test_mse_loss()
@@ -1621,7 +1656,7 @@ contains
         ! Compute loss before training (using batch size 1)
         loss_before = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
             loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_before = loss_before / 4.0
@@ -1630,7 +1665,7 @@ contains
         lr = 0.1
         do epoch = 1, 100
             do i = 1, 4
-                call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
+                call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
                 grad_loss = mse_loss_grad(output, images(i:i,:,:,:))
                 call autoencoder_backward(net, output, grad_loss)
                 call sgd_update_all(net, lr)
@@ -1640,7 +1675,7 @@ contains
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
             loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_after = loss_after / 4.0
@@ -1788,7 +1823,7 @@ contains
         call random_number(input_batch)
 
         ! Batched forward
-        call autoencoder_forward(net, input_batch, latent_batch, output_batch)
+        call autoencoder_forward(net, input_batch, 0.0, latent_batch, output_batch)
 
         ! Check batch dimension preserved
         if (size(output_batch, 1) /= batch_size .or. size(latent_batch, 1) /= batch_size) then
@@ -1801,7 +1836,7 @@ contains
         do b = 1, batch_size
             allocate(input_single(1, 3, 16, 16))
             input_single(1, :, :, :) = input_batch(b, :, :, :)
-            call autoencoder_forward(net, input_single, latent_single, output_single)
+            call autoencoder_forward(net, input_single, 0.0, latent_single, output_single)
 
             max_err = max(max_err, maxval(abs(output_batch(b:b, :, :, :) - output_single)))
             max_err = max(max_err, maxval(abs(latent_batch(b:b, :, :, :) - latent_single)))
@@ -1839,7 +1874,7 @@ contains
         call random_number(input_batch)
 
         ! Batched forward + backward
-        call autoencoder_forward(net, input_batch, latent, output_batch)
+        call autoencoder_forward(net, input_batch, 0.0, latent, output_batch)
         allocate(grad_loss_batch, mold=output_batch)
         call random_number(grad_loss_batch)
         call autoencoder_backward(net, output_batch, grad_loss_batch)
@@ -1891,19 +1926,19 @@ contains
         ! Compute loss before training
         loss_before = 0.0
         do i = 1, 8
-            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
             loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_before = loss_before / 8.0
 
         ! Train with batch_size = 4
         batch_size = 4
-        call train_network(net, images, batch_size, 50, 0.1)
+        call train_network(net, images, batch_size, 50, 0.1, 0.0)
 
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 8
-            call autoencoder_forward(net, images(i:i,:,:,:), latent, output)
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
             loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
         end do
         loss_after = loss_after / 8.0

@@ -41,11 +41,11 @@ module train
             end do
         end subroutine
 
-        subroutine train_network(net, images, batch_size, num_epochs, learning_rate, run_name)
+        subroutine train_network(net, images, batch_size, num_epochs, learning_rate, dropout, run_name)
             type(autoencoder), intent(inout) :: net
             real, intent(in) :: images(:,:,:,:)
             integer, intent(in) :: batch_size, num_epochs
-            real, intent(in) :: learning_rate
+            real, intent(in) :: learning_rate, dropout
             character(*), intent(in), optional :: run_name
 
             integer :: epoch, batch_start, batch_end, num_samples, num_batches, batch_num
@@ -66,7 +66,7 @@ module train
                     batch_end = min(batch_start + batch_size - 1, num_samples)
                     batch_num = batch_num + 1
 
-                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), latent, output)
+                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), dropout, latent, output)
 
                     total_loss = total_loss + mse_loss(output, images(batch_start:batch_end,:,:,:))
                     grad_loss = mse_loss_grad(output, images(batch_start:batch_end,:,:,:))

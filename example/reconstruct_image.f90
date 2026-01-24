@@ -58,7 +58,7 @@ program reconstruct_image
 
         allocate(tile(1, channels, tile_size, tile_size))
         tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
-        call autoencoder_forward(net, tile, latent, output)
+        call autoencoder_forward(net, tile, 0.0, latent, output)
         reconstructed(:, x_start:x_end, y_start:y_end) = output(1, :, :, :)
         deallocate(tile)
 

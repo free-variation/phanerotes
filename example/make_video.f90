@@ -101,7 +101,7 @@ program make_video
     ! First pass to get latent dimensions
     allocate(tile(1, channels, tile_size, tile_size))
     tile(1, :, :, :) = img(:, 1:tile_size, 1:tile_size)
-    call autoencoder_forward(net, tile, latent, output)
+    call autoencoder_forward(net, tile, 0.0, latent, output)
     latent_size = size(latent, 2) * size(latent, 3) * size(latent, 4)
 
     allocate(all_latents(num_tiles, size(latent,1), size(latent,2), size(latent,3), size(latent,4)))
@@ -122,7 +122,7 @@ program make_video
 
         allocate(tile(1, channels, tile_size, tile_size))
         tile(1, :, :, :) = img(:, x_start:x_end, y_start:y_end)
-        call autoencoder_forward(net, tile, latent, output)
+        call autoencoder_forward(net, tile, 0.0, latent, output)
 
         all_latents(n, :, :, :, :) = latent
         all_outputs(n, :, :, :, :) = output

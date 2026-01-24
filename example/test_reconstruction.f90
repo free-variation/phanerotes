@@ -73,7 +73,7 @@ program test_reconstruction
         tile(1, :, :, :) = img(:, (i-1)*tile_size+1:i*tile_size, (j-1)*tile_size+1:j*tile_size)
 
         ! Run through autoencoder
-        call autoencoder_forward(net, tile, latent, output)
+        call autoencoder_forward(net, tile, 0.0, latent, output)
 
         print *, ""
         print *, "Tile", n, "at grid pos (", i, ",", j, ")"

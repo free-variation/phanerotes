@@ -52,7 +52,7 @@ program train_autoencoder
     net = autoencoder_init(config)
 
     ! Train and save weights
-    call train_network(net, tiles, batch_size, 20, 0.01, "autoencoder")
+    call train_network(net, tiles, batch_size, 20, 0.01, 0.2, "autoencoder")
     print *, "Training complete."
 
 end program
