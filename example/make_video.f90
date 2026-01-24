@@ -17,7 +17,7 @@ program make_video
     type(tensor_cache), allocatable :: encoder_acts(:,:)  ! (num_tiles, num_layers-1)
 
     integer :: width, height, channels
-    integer :: tile_size, i, j, n, tiles_x, tiles_y, num_tiles
+    integer :: tile_width, tile_height, i, j, n, tiles_x, tiles_y, num_tiles
     integer :: x_start, x_end, y_start, y_end
     integer :: latent_size, current, best_next, k
     real :: best_sim, sim
@@ -31,16 +31,17 @@ program make_video
     logical :: success
     integer :: sharpen_mode   ! 0=none, 1=sharpen
     integer :: interp_mode    ! 0=pixel, 1=latent
-
-    tile_size = 512
-    fps = 24
-    duration = 300
-    total_frames = fps * duration  ! 7200 frames
+    integer :: scale_ratio, output_width, output_height
+    character(len=16) :: width_str, height_str
 
     ! Parse arguments
-    if (command_argument_count() < 2) then
-        print *, "Usage: make_video <model_file> <image_file> [options]"
+    if (command_argument_count() < 3) then
+        print *, "Usage: make_video <model_file> <image_file> <tile_width> [options]"
         print *, "Options:"
+        print *, "  --height N   - tile height (default: same as width)"
+        print *, "  --frames N   - total frames (default: 7200)"
+        print *, "  --fps N      - frames per second (default: 24)"
+        print *, "  --scale N    - upscale ratio (default: 1, no upscaling)"
         print *, "  --sharpen    - apply sharpening (default)"
         print *, "  --no-sharpen - no sharpening"
         print *, "  --pixel      - interpolate pixels (default, fast)"
@@ -50,23 +51,61 @@ program make_video
 
     call get_command_argument(1, model_file)
     call get_command_argument(2, input_image)
-    output_video = "video_1024.mp4"
+    call get_command_argument(3, arg)
+    read(arg, *) tile_width
+    tile_height = tile_width
 
     sharpen_mode = 1  ! default: sharpen
-    interp_mode = 0   ! default: pixel interpolation
+    interp_mode = -1  ! -1 = not set, 0 = pixel, 1 = latent
+    scale_ratio = 1   ! default: no upscaling
+    total_frames = 7200
+    fps = 24
 
-    do i = 3, command_argument_count()
+    i = 4
+    do while (i <= command_argument_count())
         call get_command_argument(i, arg)
         if (trim(arg) == "--no-sharpen") then
             sharpen_mode = 0
         else if (trim(arg) == "--sharpen") then
             sharpen_mode = 1
         else if (trim(arg) == "--pixel") then
+            if (interp_mode == 1) then
+                print *, "Error: --pixel and --latent are mutually exclusive"
+                stop 1
+            end if
             interp_mode = 0
         else if (trim(arg) == "--latent") then
+            if (interp_mode == 0) then
+                print *, "Error: --pixel and --latent are mutually exclusive"
+                stop 1
+            end if
             interp_mode = 1
+        else if (trim(arg) == "--scale") then
+            i = i + 1
+            call get_command_argument(i, arg)
+            read(arg, *) scale_ratio
+        else if (trim(arg) == "--frames") then
+            i = i + 1
+            call get_command_argument(i, arg)
+            read(arg, *) total_frames
+        else if (trim(arg) == "--fps") then
+            i = i + 1
+            call get_command_argument(i, arg)
+            read(arg, *) fps
+        else if (trim(arg) == "--height") then
+            i = i + 1
+            call get_command_argument(i, arg)
+            read(arg, *) tile_height
         end if
+        i = i + 1
     end do
+
+    ! Default to pixel interpolation if not specified
+    if (interp_mode == -1) interp_mode = 0
+
+    output_width = tile_width * scale_ratio
+    output_height = tile_height * scale_ratio
+    write(output_video, '(A,I0,A,I0,A)') "video_", output_width, "x", output_height, ".mp4"
 
     print *, "Model:", trim(model_file)
     print *, "Input:", trim(input_image)
@@ -86,8 +125,8 @@ program make_video
     width = size(img, 3)
     print *, "Image size:", channels, "x", height, "x", width
 
-    tiles_x = width / tile_size
-    tiles_y = height / tile_size
+    tiles_x = width / tile_width
+    tiles_y = height / tile_height
     num_tiles = tiles_x * tiles_y
     print *, "Tiles:", tiles_x, "x", tiles_y, "=", num_tiles
 
@@ -102,8 +141,8 @@ program make_video
 
     ! First pass to get latent dimensions
     ! Tile layout: (channels, tile_height, tile_width, batch)
-    allocate(tile(channels, tile_size, tile_size, 1))
-    tile(:, :, :, 1) = img(:, 1:tile_size, 1:tile_size)
+    allocate(tile(channels, tile_height, tile_width, 1))
+    tile(:, :, :, 1) = img(:, 1:tile_height, 1:tile_width)
     call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
     ! Latent layout: (channels, h, w, batch)
     latent_size = size(latent, 1) * size(latent, 2) * size(latent, 3)
@@ -122,12 +161,12 @@ program make_video
         i = mod(n - 1, tiles_x) + 1
         j = (n - 1) / tiles_x + 1
 
-        x_start = (i-1) * tile_size + 1
-        x_end = i * tile_size
-        y_start = (j-1) * tile_size + 1
-        y_end = j * tile_size
+        x_start = (i-1) * tile_width + 1
+        x_end = i * tile_width
+        y_start = (j-1) * tile_height + 1
+        y_end = j * tile_height
 
-        allocate(tile(channels, tile_size, tile_size, 1))
+        allocate(tile(channels, tile_height, tile_width, 1))
         ! img is (channels, height, width), extract tile
         tile(:, :, :, 1) = img(:, y_start:y_end, x_start:x_end)
         call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
@@ -208,7 +247,7 @@ program make_video
         if (interp_mode == 0) then
             ! Pixel interpolation (fast)
             ! Output layout: (channels, height, width, batch)
-            allocate(frame(channels, tile_size, tile_size))
+            allocate(frame(channels, tile_height, tile_width))
             frame = (1.0 - t) * all_outputs(sequence(trans), :, :, :, 1) + &
                     t * all_outputs(sequence(trans+1), :, :, :, 1)
         else
@@ -219,7 +258,7 @@ program make_video
                 encoder_acts(sequence(trans), :), &
                 encoder_acts(sequence(trans+1), :), &
                 1.0 - t, output)
-            allocate(frame(channels, tile_size, tile_size))
+            allocate(frame(channels, tile_height, tile_width))
             frame = output(:, :, :, 1)
         end if
 
@@ -237,17 +276,19 @@ program make_video
 
     print *, "Total frames generated:", total_frames
 
-    ! Create video with ffmpeg (upscale to 1024x1024, optionally sharpen)
+    ! Create video with ffmpeg
     print *, "Creating video with ffmpeg..."
+    write(width_str, '(I0)') output_width
+    write(height_str, '(I0)') output_height
     if (sharpen_mode == 0) then
         write(cmd, '(A,I0,A)') "ffmpeg -y -framerate ", fps, &
             " -i /tmp/video_frames/frame_%06d.bmp" // &
-            " -vf ""scale=1024:1024:flags=lanczos""" // &
+            " -vf ""scale=" // trim(width_str) // ":" // trim(height_str) // ":flags=lanczos""" // &
             " -c:v libx264 -pix_fmt yuv420p " // trim(output_video)
     else
         write(cmd, '(A,I0,A)') "ffmpeg -y -framerate ", fps, &
             " -i /tmp/video_frames/frame_%06d.bmp" // &
-            " -vf ""scale=1024:1024:flags=lanczos,unsharp=7:7:2.5:7:7:0.0""" // &
+            " -vf ""scale=" // trim(width_str) // ":" // trim(height_str) // ":flags=lanczos,unsharp=7:7:2.5:7:7:0.0""" // &
             " -c:v libx264 -pix_fmt yuv420p " // trim(output_video)
     end if
     call execute_command_line(trim(cmd))

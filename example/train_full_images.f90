@@ -16,6 +16,7 @@ program train_full_images
     integer :: tile_width, tile_height, tiles_x, tiles_y, tiles_per_image, total_tiles, batch_size
     integer :: num_epochs
     logical :: use_concatenate
+    integer :: concat_mode  ! -1 = not set, 0 = add, 1 = concat
     character(len=16) :: mode_str
 
     ! Parse arguments
@@ -39,7 +40,7 @@ program train_full_images
     read(arg, *) tile_width
 
     tile_height = tile_width
-    use_concatenate = .true.
+    concat_mode = -1  ! not set
     num_epochs = 10
     batch_size = 8
 
@@ -47,9 +48,17 @@ program train_full_images
     do while (i <= command_argument_count())
         call get_command_argument(i, arg)
         if (trim(arg) == "--add") then
-            use_concatenate = .false.
+            if (concat_mode == 1) then
+                print *, "Error: --add and --concat are mutually exclusive"
+                stop 1
+            end if
+            concat_mode = 0
         else if (trim(arg) == "--concat") then
-            use_concatenate = .true.
+            if (concat_mode == 0) then
+                print *, "Error: --add and --concat are mutually exclusive"
+                stop 1
+            end if
+            concat_mode = 1
         else if (trim(arg) == "--height") then
             i = i + 1
             call get_command_argument(i, arg)
@@ -65,6 +74,9 @@ program train_full_images
         end if
         i = i + 1
     end do
+
+    ! Default to concatenate if not specified
+    use_concatenate = (concat_mode /= 0)
 
     training_dir = "images/training_data/"
 
