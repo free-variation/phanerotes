@@ -12,20 +12,23 @@ program train_full_images
     character(len=64) :: training_dir, arg
     integer :: i, j, k, idx, num_images, channels, width, height, unit_num, ios
     integer :: tile_width, tile_height, tiles_x, tiles_y, tiles_per_image, total_tiles, batch_size
+    integer :: num_epochs
     logical :: use_concatenate
     character(len=16) :: mode_str
 
     ! Parse arguments
     if (command_argument_count() < 1) then
-        print *, "Usage: train_full_images <tile_width> [tile_height] [--add|--concat]"
+        print *, "Usage: train_full_images <tile_width> [options]"
         print *, "  tile_width  - width of tiles (e.g., 512)"
-        print *, "  tile_height - height of tiles (default: same as width)"
+        print *, "Options:"
+        print *, "  --height N  - tile height (default: same as width)"
+        print *, "  --epochs N  - number of training epochs (default: 10)"
         print *, "  --add       - use addition for skip connections"
         print *, "  --concat    - use concatenation for skip connections (default)"
         print *, "Examples:"
-        print *, "  train_full_images 512              # 512x512 square tiles, concat mode"
-        print *, "  train_full_images 576 384          # 576x384 (3:2) tiles, concat mode"
-        print *, "  train_full_images 512 512 --add    # 512x512 tiles, addition mode"
+        print *, "  train_full_images 512                      # 512x512, 10 epochs"
+        print *, "  train_full_images 512 --epochs 50          # 512x512, 50 epochs"
+        print *, "  train_full_images 576 --height 384 --add   # 576x384, addition mode"
         stop 1
     end if
 
@@ -34,22 +37,32 @@ program train_full_images
 
     tile_height = tile_width
     use_concatenate = .true.
+    num_epochs = 10
 
-    do i = 2, command_argument_count()
+    i = 2
+    do while (i <= command_argument_count())
         call get_command_argument(i, arg)
         if (trim(arg) == "--add") then
             use_concatenate = .false.
         else if (trim(arg) == "--concat") then
             use_concatenate = .true.
-        else
+        else if (trim(arg) == "--height") then
+            i = i + 1
+            call get_command_argument(i, arg)
             read(arg, *) tile_height
+        else if (trim(arg) == "--epochs") then
+            i = i + 1
+            call get_command_argument(i, arg)
+            read(arg, *) num_epochs
         end if
+        i = i + 1
     end do
 
     training_dir = "images/training_data/"
     batch_size = 8
 
     print *, "Tile size:", tile_width, "x", tile_height
+    print *, "Epochs:", num_epochs
 
     ! Get file count by listing directory to temp file
     call execute_command_line("ls " // trim(training_dir) // " > /tmp/image_list.txt")
@@ -127,7 +140,7 @@ program train_full_images
 
     ! Train
     print *, "Training..."
-    call train_network(net, tiles, batch_size, 10, 0.01, 0.2)
+    call train_network(net, tiles, batch_size, num_epochs, 0.01, 0.2)
 
     write(filename, '(A,I0,A,I0,A,A,A)') "ae-weights-", tile_width, "x", tile_height, "-", trim(mode_str), ".bin"
     call save_autoencoder(net, trim(filename))
