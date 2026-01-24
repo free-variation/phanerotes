@@ -1,99 +1,96 @@
 program test_reconstruction
     use image
     use cnn_autoencoder
+    use train
     implicit none
 
     type(autoencoder_config) :: config
     type(autoencoder) :: net
-    real, allocatable :: img(:,:,:)
-    real, allocatable :: tile(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
-    real, allocatable :: tile_3d(:,:,:), output_3d(:,:,:)
-    integer, allocatable :: tile_x(:), tile_y(:)
-    integer :: width, height, channels
-    integer :: tile_size, i, j, n, tiles_x, tiles_y
-    logical :: success
-    character(len=256) :: input_file, output_file, image_file
+    real, allocatable :: images(:,:,:,:), img(:,:,:)
+    real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
+    character(len=256) :: resized_file, out_file, cmd
+    character(len=64) :: src_files(4)
+    integer :: i, img_size, num_images, num_epochs, mode
+    logical :: use_concatenate, success
+    real :: dropout_rate
+    character(len=16) :: mode_name
+    character(len=8) :: size_str
 
-    ! Config must match what was used for training
-    config%input_channels = 3
-    config%num_layers = 3
-    config%base_channels = 32
-    config%max_channels = 128
-    config%kernel_width = 3
-    config%kernel_height = 3
-    config%stride = 2
-    config%padding = 1
+    src_files(1) = "images/training_data/DSCF6833.JPG"
+    src_files(2) = "images/training_data/DSCF6949.jpg"
+    src_files(3) = "images/training_data/DSCF6974.jpg"
+    src_files(4) = "images/training_data/P2050076.jpg"
 
-    tile_size = 512
+    img_size = 128
+    num_images = 4
+    num_epochs = 200
 
-    print *, "Initializing autoencoder..."
-    net = autoencoder_init(config)
+    write(size_str, '(I0)') img_size
 
-    print *, "Loading weights from autoencoder_weights.bin..."
-    call load_weights(net, "autoencoder_weights.bin")
+    ! Resize images using sips
+    print *, "Resizing images to", img_size, "x", img_size
+    do i = 1, num_images
+        write(resized_file, '(A,I0,A)') "images/test_input_", i, ".png"
+        cmd = "sips -z " // trim(size_str) // " " // trim(size_str) // &
+              " " // trim(src_files(i)) // " --out " // trim(resized_file) // " >/dev/null 2>&1"
+        call execute_command_line(trim(cmd))
+        print *, "  ", trim(resized_file)
+    end do
 
-    ! Load a specific image
-    print *, "Loading test image..."
-    image_file = "test1_resized.jpg"
-    print *, "Using:", trim(image_file)
-    img = load_image("images/" // trim(image_file))
-    channels = size(img, 1)
-    width = size(img, 2)
-    height = size(img, 3)
-    print *, "Image size:", channels, "x", width, "x", height
-    print *, "Image brightness range:", minval(img), maxval(img)
+    ! Load resized images
+    print *, "Loading images..."
+    allocate(images(num_images, 3, img_size, img_size))
+    do i = 1, num_images
+        write(resized_file, '(A,I0,A)') "images/test_input_", i, ".png"
+        img = load_image(trim(resized_file))
+        images(i, :, :, :) = img
+    end do
 
-    ! Get tiles from a 3x3 grid across the image
-    tiles_x = width / tile_size
-    tiles_y = height / tile_size
+    ! Test three modes: concat, add, add with no skip connections
+    do mode = 1, 3
+        if (mode == 1) then
+            use_concatenate = .true.
+            dropout_rate = 0.1
+            mode_name = "concat"
+            print *, "=== Testing CONCAT mode ==="
+        else if (mode == 2) then
+            use_concatenate = .false.
+            dropout_rate = 0.1
+            mode_name = "add"
+            print *, "=== Testing ADD mode ==="
+        else
+            use_concatenate = .false.
+            dropout_rate = 1.0
+            mode_name = "noskip"
+            print *, "=== Testing ADD mode (no skip, dropout=1.0) ==="
+        end if
 
-    allocate(tile_x(9))
-    allocate(tile_y(9))
+        config%input_channels = 3
+        config%num_layers = 3
+        config%base_channels = 32
+        config%max_channels = 128
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+        config%concatenate = use_concatenate
 
-    ! Sample at 1/4, 1/2, 3/4 positions
-    n = 0
-    do j = 1, 3
-        do i = 1, 3
-            n = n + 1
-            tile_x(n) = (tiles_x * i) / 4
-            tile_y(n) = (tiles_y * j) / 4
+        net = autoencoder_init(config)
+
+        print *, "Training..."
+        call train_network(net, images, num_images, num_epochs, 0.1, dropout_rate)
+
+        print *, "Generating reconstructions..."
+        call set_training(net, .false.)
+
+        do i = 1, num_images
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
+            write(out_file, '(A,I0,A,A,A)') "images/test_output_", i, "_", trim(mode_name), ".bmp"
+            call save_image(trim(out_file), output(1,:,:,:), success)
+            print *, "  Saved:", trim(out_file)
         end do
     end do
 
-    ! Process 9 tiles from grid
-    allocate(tile(1, channels, tile_size, tile_size))
-    allocate(tile_3d(channels, tile_size, tile_size))
-    allocate(output_3d(channels, tile_size, tile_size))
-
-    do n = 1, 9
-        i = tile_x(n)
-        j = tile_y(n)
-
-        ! Extract tile
-        tile(1, :, :, :) = img(:, (i-1)*tile_size+1:i*tile_size, (j-1)*tile_size+1:j*tile_size)
-
-        ! Run through autoencoder
-        call autoencoder_forward(net, tile, 0.0, latent, output)
-
-        print *, ""
-        print *, "Tile", n, "at grid pos (", i, ",", j, ")"
-        print *, "  Input range:", minval(tile), maxval(tile)
-        print *, "  Output range:", minval(output), maxval(output)
-
-        ! Save input tile
-        tile_3d = tile(1, :, :, :)
-        write(input_file, '(A,I0,A)') "tile_", n, "_input.bmp"
-        call save_image(trim(input_file), tile_3d, success)
-        print *, "  Saved:", trim(input_file)
-
-        ! Save output reconstruction
-        output_3d = output(1, :, :, :)
-        write(output_file, '(A,I0,A)') "tile_", n, "_output.bmp"
-        call save_image(trim(output_file), output_3d, success)
-        print *, "  Saved:", trim(output_file)
-    end do
-
-    print *, ""
-    print *, "Done. Check tile_*_input.bmp and tile_*_output.bmp files."
+    print *, "Done. Compare test_input_*.png with test_output_*_{concat,add,noskip}.bmp"
 
 end program

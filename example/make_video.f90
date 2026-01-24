@@ -4,7 +4,6 @@ program make_video
     use omp_lib
     implicit none
 
-    type(autoencoder_config) :: config
     type(autoencoder) :: net
     real, allocatable :: img(:,:,:)
     real, allocatable :: tile(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
@@ -29,16 +28,6 @@ program make_video
     character(len=256) :: frame_file, cmd, input_image, output_video, sharpen_arg
     logical :: success
     integer :: sharpen_mode  ! 0=none, 1=sharpen
-
-    ! Setup
-    config%input_channels = 3
-    config%num_layers = 3
-    config%base_channels = 32
-    config%max_channels = 128
-    config%kernel_width = 3
-    config%kernel_height = 3
-    config%stride = 2
-    config%padding = 1
 
     tile_size = 512
     fps = 24
@@ -72,9 +61,8 @@ program make_video
         print *, "Sharpening: enabled"
     end if
 
-    print *, "Initializing autoencoder..."
-    net = autoencoder_init(config)
-    call load_weights(net, "ae-weights-576x384.bin")
+    print *, "Loading autoencoder..."
+    net = load_autoencoder("ae-weights-576x384.bin")
     call set_training(net, .false.)
 
     print *, "Loading image..."

@@ -39,13 +39,17 @@ module train
                 call sgd_update(net%encoder(i), learning_rate)
                 call sgd_update(net%decoder(i), learning_rate)
             end do
+
+            do i = 1, net%config%num_layers - 1
+                call sgd_update(net%skip_projection(i), learning_rate)
+            end do
         end subroutine
 
-        subroutine train_network(net, images, batch_size, num_epochs, learning_rate, dropout, run_name)
+        subroutine train_network(net, images, batch_size, num_epochs, learning_rate, dropout_rate, run_name)
             type(autoencoder), intent(inout) :: net
             real, intent(in) :: images(:,:,:,:)
             integer, intent(in) :: batch_size, num_epochs
-            real, intent(in) :: learning_rate, dropout
+            real, intent(in) :: learning_rate, dropout_rate
             character(*), intent(in), optional :: run_name
 
             integer :: epoch, batch_start, batch_end, num_samples, num_batches, batch_num
@@ -66,7 +70,7 @@ module train
                     batch_end = min(batch_start + batch_size - 1, num_samples)
                     batch_num = batch_num + 1
 
-                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), dropout, latent, output)
+                    call autoencoder_forward(net, images(batch_start:batch_end,:,:,:), dropout_rate, latent, output)
 
                     total_loss = total_loss + mse_loss(output, images(batch_start:batch_end,:,:,:))
                     grad_loss = mse_loss_grad(output, images(batch_start:batch_end,:,:,:))
@@ -82,7 +86,7 @@ module train
 
                 if (present(run_name)) then
                     write(checkpoint_file, '(A,A,I0,A)') trim(run_name), "_epoch_", epoch, ".bin"
-                    call save_weights(net, trim(checkpoint_file))
+                    call save_autoencoder(net, trim(checkpoint_file))
                 end if
             end do
         end subroutine 

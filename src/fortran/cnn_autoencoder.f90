@@ -13,6 +13,7 @@ module cnn_autoencoder
         integer :: kernel_height    ! typically 3
         integer :: stride           ! typically 2 for encoder
         integer :: padding          ! typically 1 for 3x3 kernel
+        logical :: concatenate      ! whether skip connections are concatenated or summed
     end type
 
     type :: activation_cache
@@ -23,13 +24,19 @@ module cnn_autoencoder
         real, allocatable :: gradients(:, :,:,:)
     end type
 
+    type :: dropout_cache
+        real, allocatable :: dropout(:)
+    end type
+
     type :: autoencoder
         type(autoencoder_config) :: config
         type(conv_layer), allocatable :: encoder(:)
         type(conv_layer), allocatable :: decoder(:)
+        type(conv_layer), allocatable :: skip_projection(:)
 
         type(activation_cache), allocatable :: encoder_cache(:)
         type(activation_cache), allocatable :: decoder_cache(:)
+        type(dropout_cache), allocatable :: skip_dropout_cache(:)
     end type
 
     contains
@@ -68,6 +75,7 @@ module cnn_autoencoder
             type(autoencoder) :: net
 
             integer :: i, in_channels, out_channels
+            type(autoencoder_config) :: config_1x1
 
             net%config = config
 
@@ -75,6 +83,9 @@ module cnn_autoencoder
             allocate(net%decoder(config%num_layers))
             allocate(net%encoder_cache(config%num_layers))
             allocate(net%decoder_cache(config%num_layers))
+            
+            allocate(net%skip_projection(config%num_layers - 1))
+            allocate(net%skip_dropout_cache(config%num_layers - 1))
 
             do i = 1, config%num_layers
                 if (i == 1) then
@@ -89,12 +100,25 @@ module cnn_autoencoder
 
             do i = 1, config%num_layers
                 in_channels = net%encoder(config%num_layers - i + 1)%out_channels
-                if (i < config%num_layers) then
+                if (config%concatenate .and. i < config%num_layers) then
                     in_channels = in_channels + net%encoder(config%num_layers - i)%out_channels
                 end if
                 out_channels = net%encoder(config%num_layers - i + 1)%in_channels
 
                 call init_layer(net%decoder(i), config, in_channels, out_channels, 1)
+            end do
+
+            config_1x1 = config
+            config_1x1%kernel_width = 1
+            config_1x1%kernel_height = 1
+            config_1x1%padding = 0
+
+            do i = 1, config%num_layers - 1
+                in_channels = net%encoder(config%num_layers - i)%out_channels
+                out_channels = net%decoder(i)%in_channels
+
+                call init_layer(net%skip_projection(i), config_1x1, in_channels, out_channels, 1)
+                allocate(net%skip_dropout_cache(i)%dropout(in_channels))
             end do
         end function
 
@@ -107,6 +131,10 @@ module cnn_autoencoder
            do i = 1, net%config%num_layers
                net%encoder(i)%training = training
                net%decoder(i)%training = training
+           end do
+
+           do i = 1, net%config%num_layers - 1
+               net%skip_projection(i)%training = training
            end do
        end subroutine
 
@@ -123,40 +151,49 @@ module cnn_autoencoder
            concatenate_channels(:, num_channels1 + 1:num_channels1 + num_channels2, :, :) = b
        end function
 
-       function dropout_channels(a, dropout)
+       subroutine dropout_channels(a, dropout_rate, dropped_a, dropped_cache)
            real, intent(in) :: a(:, :,:,:)
-           real, intent(in) :: dropout
-           real, allocatable :: dropout_channels(:, :,:,:)
+           real, intent(in) :: dropout_rate
+           real, intent(out), allocatable :: dropped_a(:, :,:,:)
+           type(dropout_cache) :: dropped_cache
 
            real :: rand
            integer :: c, num_channels
            real :: scale
+    
+           num_channels = size(a, 2)
 
-           dropout_channels = a
-           if (dropout == 0.0) return
+           dropped_a = a
+           if (dropout_rate == 0.0) then
+               dropped_cache%dropout = 1.0
+               return
+           end if
 
-           scale = 1.0 / (1.0 - dropout)
+           scale = 1.0 / (1.0 - dropout_rate)
 
            do c = 1, size(a, 2) ! number of channels
                call random_number(rand)
-               if (rand < dropout) then
-                   dropout_channels(:, c, :, :) = 0.0
+               if (rand < dropout_rate) then
+                   dropped_a(:, c, :, :) = 0.0
+                   dropped_cache%dropout(c) = 0.0
                else
-                   dropout_channels(:, c, :, :) = dropout_channels(:, c, :, :) * scale
+                   dropped_a(:, c, :, :) = dropped_a(:, c, :, :) * scale
+                   dropped_cache%dropout(c) = scale
                end if
            end do
-       end function
+       end subroutine
 
-       subroutine autoencoder_forward(net, input, dropout, latent, output, encoder_acts_out)
+       subroutine autoencoder_forward(net, input, dropout_rate, latent, output, encoder_acts_out)
            type(autoencoder), intent(inout) :: net
-           real, intent(in) :: dropout
+           real, intent(in) :: dropout_rate
            real, intent(in) :: input(:, :,:,:)
            real, allocatable, intent(out) :: latent(:, :,:,:)
            real, allocatable, intent(out) :: output(:, :,:,:)
            type(activation_cache), allocatable, intent(out), optional :: encoder_acts_out(:)
 
-           real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:), concatenated_inputs(:, :,:,:)
+           real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
            type(activation_cache), allocatable :: encoder_activations(:)
+           real, allocatable :: skip_input(:, :,:,:), skip_output(:, :,:,:), aggregated_input(:, :,:,:)
            integer :: i
 
            allocate(encoder_activations(net%config%num_layers - 1))
@@ -178,10 +215,17 @@ module cnn_autoencoder
 
            do i = 1, net%config%num_layers - 1
                layer_input = upsample(layer_input, net%config%stride)
-               concatenated_inputs = concatenate_channels(layer_input, &
-                   dropout_channels(encoder_activations(net%config%num_layers - i)%activations, dropout))
+               call dropout_channels(encoder_activations(net%config%num_layers - i)%activations, dropout_rate, &
+                   skip_input, net%skip_dropout_cache(i))
 
-               call conv_forward(net%decoder(i), concatenated_inputs, layer_output)
+               if (net%config%concatenate) then
+                   aggregated_input = concatenate_channels(layer_input, skip_input)
+               else 
+                   call conv_forward(net%skip_projection(i), skip_input, skip_output)
+                   aggregated_input = layer_input + skip_output
+               end if
+
+               call conv_forward(net%decoder(i), aggregated_input, layer_output)
                if (net%decoder(i)%training) net%decoder_cache(i)%activations = layer_output
                layer_output = relu_forward(layer_output)
 
@@ -198,9 +242,9 @@ module cnn_autoencoder
            real, intent(in) :: output(:, :,:,:)
            real, intent(in) :: grad_loss(:, :,:,:)
 
-           real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:)
+           real, allocatable :: grad_input(:, :,:,:), grad_output(:, :,:,:), skip_grad(:, :,:,:)
            type(gradient_cache), allocatable :: skip_gradients(:)
-           integer :: i, num_skip_channels
+           integer :: i, c, num_skip_channels
 
            allocate(skip_gradients(net%config%num_layers - 1))
 
@@ -212,9 +256,25 @@ module cnn_autoencoder
 
                call conv_backward(net%decoder(i), grad_output, grad_input)
 
-               num_skip_channels = net%encoder(net%config%num_layers - i)%out_channels
-               skip_gradients(i)%gradients = grad_input(:, size(grad_input, 2) - num_skip_channels + 1:, :, :)
-               grad_input = grad_input(:, 1:size(grad_input, 2) - num_skip_channels, :, :) 
+               if (net%config%concatenate) then
+                   num_skip_channels = net%encoder(net%config%num_layers - i)%out_channels
+
+                   skip_gradients(i)%gradients = grad_input(:, size(grad_input, 2) - num_skip_channels + 1:, :, :)
+                   do c = 1, size(skip_gradients(i)%gradients, 2)
+                       skip_gradients(i)%gradients(:, c, :, :) = skip_gradients(i)%gradients(:, c, :, :) * &
+                           net%skip_dropout_cache(i)%dropout(c)
+                   end do
+
+                   grad_input = grad_input(:, 1:size(grad_input, 2) - num_skip_channels, :, :) 
+               else
+                   call conv_backward(net%skip_projection(i), grad_input, skip_grad)
+
+                   skip_gradients(i)%gradients = skip_grad
+                   do c = 1, size(skip_gradients(i)%gradients, 2)
+                       skip_gradients(i)%gradients(:, c, :, :) = skip_gradients(i)%gradients(:, c, :, :) * &
+                           net%skip_dropout_cache(i)%dropout(c)
+                   end do
+               end if
            end do
 
            grad_input = upsample_backward(grad_input, net%config%stride)
@@ -228,13 +288,27 @@ module cnn_autoencoder
            end do
        end subroutine
 
-       subroutine save_weights(net, filename)
+       subroutine save_autoencoder(net, filename)
            type(autoencoder), intent(in) :: net
            character(*), intent(in) :: filename
 
-           integer :: i, unit
+           integer :: i, unit, concat_int
 
            open(newunit=unit, file = filename, form = "unformatted", access = "stream")
+
+           ! Write config
+           write(unit) net%config%input_channels
+           write(unit) net%config%num_layers
+           write(unit) net%config%base_channels
+           write(unit) net%config%max_channels
+           write(unit) net%config%kernel_width
+           write(unit) net%config%kernel_height
+           write(unit) net%config%stride
+           write(unit) net%config%padding
+           concat_int = merge(1, 0, net%config%concatenate)
+           write(unit) concat_int
+
+           ! Write weights
            do i = 1, net%config%num_layers
                write(unit) net%encoder(i)%weights
                write(unit) net%encoder(i)%bias
@@ -245,16 +319,39 @@ module cnn_autoencoder
                write(unit) net%decoder(i)%bias
            end do
 
+           do i = 1, net%config%num_layers - 1
+               write(unit) net%skip_projection(i)%weights
+               write(unit) net%skip_projection(i)%bias
+           end do
+
            close(unit)
        end subroutine
 
-       subroutine load_weights(net, filename)
-           type(autoencoder), intent(inout) :: net
+       function load_autoencoder(filename) result(net)
            character(*), intent(in) :: filename
+           type(autoencoder) :: net
 
-           integer :: i, unit
+           type(autoencoder_config) :: config
+           integer :: i, unit, concat_int
 
            open(newunit=unit, file=filename, form="unformatted", access="stream", status="old")
+
+           ! Read config
+           read(unit) config%input_channels
+           read(unit) config%num_layers
+           read(unit) config%base_channels
+           read(unit) config%max_channels
+           read(unit) config%kernel_width
+           read(unit) config%kernel_height
+           read(unit) config%stride
+           read(unit) config%padding
+           read(unit) concat_int
+           config%concatenate = (concat_int == 1)
+
+           ! Initialize network with config
+           net = autoencoder_init(config)
+
+           ! Read weights
            do i = 1, net%config%num_layers
                read(unit) net%encoder(i)%weights
                read(unit) net%encoder(i)%bias
@@ -265,8 +362,13 @@ module cnn_autoencoder
                read(unit) net%decoder(i)%bias
            end do
 
+           do i = 1, net%config%num_layers - 1
+               read(unit) net%skip_projection(i)%weights
+               read(unit) net%skip_projection(i)%bias
+           end do
+
            close(unit)
-       end subroutine
+       end function
 
        subroutine decode_latent(net, latent, output)
            type(autoencoder), intent(inout) :: net
@@ -280,18 +382,22 @@ module cnn_autoencoder
            do i = 1, net%config%num_layers - 1
                layer_input = upsample(layer_input, net%config%stride)
 
-               batch_size = size(layer_input, 1)
-               decoder_channels = size(layer_input, 2)
-               width = size(layer_input, 3)
-               height = size(layer_input, 4)
-               skip_channels = net%encoder(net%config%num_layers - i)%out_channels
+               if (net%config%concatenate) then
+                   batch_size = size(layer_input, 1)
+                   decoder_channels = size(layer_input, 2)
+                   width = size(layer_input, 3)
+                   height = size(layer_input, 4)
+                   skip_channels = net%encoder(net%config%num_layers - i)%out_channels
 
-               allocate(padded_input(batch_size, decoder_channels + skip_channels, width, height))
-               padded_input(:, 1:decoder_channels, :, :) = layer_input
-               padded_input(:, decoder_channels + 1:, :, :) = 0.0
+                   allocate(padded_input(batch_size, decoder_channels + skip_channels, width, height))
+                   padded_input(:, 1:decoder_channels, :, :) = layer_input
+                   padded_input(:, decoder_channels + 1:, :, :) = 0.0
 
-               call conv_forward(net%decoder(i), padded_input, layer_output)
-               deallocate(padded_input)
+                   call conv_forward(net%decoder(i), padded_input, layer_output)
+                   deallocate(padded_input)
+               else
+                   call conv_forward(net%decoder(i), layer_input, layer_output)
+               end if
 
                layer_output = relu_forward(layer_output)
                layer_input = layer_output
@@ -311,7 +417,8 @@ module cnn_autoencoder
            real, allocatable, intent(out) :: output(:, :,:,:)
 
            real, allocatable :: layer_input(:, :,:,:), layer_output(:, :,:,:)
-           real, allocatable :: skip_interp(:, :,:,:), concatenated_inputs(:, :,:,:)
+           real, allocatable :: skip_interp(:, :,:,:), skip_projected(:, :,:,:)
+           real, allocatable :: aggregated_input(:, :,:,:)
            integer :: i, skip_idx
 
            layer_input = alpha * latent_a + (1.0 - alpha) * latent_b
@@ -323,9 +430,14 @@ module cnn_autoencoder
                skip_interp = alpha * encoder_acts_a(skip_idx)%activations + &
                    (1.0 - alpha) * encoder_acts_b(skip_idx)%activations
 
-               concatenated_inputs = concatenate_channels(layer_input, skip_interp)
+               if (net%config%concatenate) then
+                   aggregated_input = concatenate_channels(layer_input, skip_interp)
+               else
+                   call conv_forward(net%skip_projection(i), skip_interp, skip_projected)
+                   aggregated_input = layer_input + skip_projected
+               end if
 
-               call conv_forward(net%decoder(i), concatenated_inputs, layer_output)
+               call conv_forward(net%decoder(i), aggregated_input, layer_output)
                layer_output = relu_forward(layer_output)
                layer_input = layer_output
            end do

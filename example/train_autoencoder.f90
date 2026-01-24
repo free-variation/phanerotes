@@ -47,6 +47,7 @@ program train_autoencoder
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
+    config%concatenate = .true.
 
     print *, "Initializing autoencoder..."
     net = autoencoder_init(config)

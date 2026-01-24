@@ -63,6 +63,12 @@ program test_cnn_core
     call test_autoencoder_backward_numerical()
     call test_autoencoder_backward_batched()
 
+    ! addition mode tests
+    call test_autoencoder_init_channels_addition()
+    call test_autoencoder_forward_addition()
+    call test_autoencoder_backward_addition()
+    call test_training_addition()
+
     ! loss function tests
     call test_mse_loss()
     call test_mse_loss_grad()
@@ -1110,6 +1116,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1138,6 +1145,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1210,6 +1218,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1258,6 +1267,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1294,6 +1304,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1336,6 +1347,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1371,6 +1383,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1413,6 +1426,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1432,6 +1446,256 @@ contains
         end if
 
         print *, "PASS: autoencoder_forward with dropout"
+    end subroutine
+
+    ! ============ addition mode tests ============
+
+    subroutine test_autoencoder_init_channels_addition()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+
+        config%input_channels = 3
+        config%num_layers = 4
+        config%base_channels = 64
+        config%max_channels = 512
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+        config%concatenate = .false.
+
+        net = autoencoder_init(config)
+
+        ! Encoder: same as concat mode
+        ! 3->128, 128->256, 256->512, 512->512
+        if (net%encoder(1)%in_channels /= 3 .or. net%encoder(1)%out_channels /= 128) then
+            print *, "FAIL autoencoder_init_channels_addition: encoder(1) wrong"
+            error stop
+        end if
+
+        ! Decoder in addition mode: no skip channel concatenation
+        ! decoder(1): 512 -> 512 (no +512 from skip)
+        if (net%decoder(1)%in_channels /= 512 .or. net%decoder(1)%out_channels /= 512) then
+            print *, "FAIL autoencoder_init_channels_addition: decoder(1) wrong", &
+                     net%decoder(1)%in_channels, net%decoder(1)%out_channels
+            error stop
+        end if
+
+        ! decoder(2): 512 -> 256
+        if (net%decoder(2)%in_channels /= 512 .or. net%decoder(2)%out_channels /= 256) then
+            print *, "FAIL autoencoder_init_channels_addition: decoder(2) wrong", &
+                     net%decoder(2)%in_channels, net%decoder(2)%out_channels
+            error stop
+        end if
+
+        ! decoder(3): 256 -> 128
+        if (net%decoder(3)%in_channels /= 256 .or. net%decoder(3)%out_channels /= 128) then
+            print *, "FAIL autoencoder_init_channels_addition: decoder(3) wrong", &
+                     net%decoder(3)%in_channels, net%decoder(3)%out_channels
+            error stop
+        end if
+
+        ! decoder(4): 128 -> 3
+        if (net%decoder(4)%in_channels /= 128 .or. net%decoder(4)%out_channels /= 3) then
+            print *, "FAIL autoencoder_init_channels_addition: decoder(4) wrong", &
+                     net%decoder(4)%in_channels, net%decoder(4)%out_channels
+            error stop
+        end if
+
+        ! Check skip_projection exists and has correct dimensions
+        ! skip_projection(i) projects encoder(N-i) output to decoder(i) input channels
+        ! skip_projection(1): 512 -> 512
+        if (net%skip_projection(1)%in_channels /= 512 .or. net%skip_projection(1)%out_channels /= 512) then
+            print *, "FAIL autoencoder_init_channels_addition: skip_projection(1) wrong", &
+                     net%skip_projection(1)%in_channels, net%skip_projection(1)%out_channels
+            error stop
+        end if
+
+        ! skip_projection(2): 256 -> 512
+        if (net%skip_projection(2)%in_channels /= 256 .or. net%skip_projection(2)%out_channels /= 512) then
+            print *, "FAIL autoencoder_init_channels_addition: skip_projection(2) wrong", &
+                     net%skip_projection(2)%in_channels, net%skip_projection(2)%out_channels
+            error stop
+        end if
+
+        ! skip_projection(3): 128 -> 256
+        if (net%skip_projection(3)%in_channels /= 128 .or. net%skip_projection(3)%out_channels /= 256) then
+            print *, "FAIL autoencoder_init_channels_addition: skip_projection(3) wrong", &
+                     net%skip_projection(3)%in_channels, net%skip_projection(3)%out_channels
+            error stop
+        end if
+
+        print *, "PASS: autoencoder_init channels (addition mode)"
+    end subroutine
+
+    subroutine test_autoencoder_forward_addition()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+        real, allocatable :: input(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
+
+        config%input_channels = 3
+        config%num_layers = 3
+        config%base_channels = 32
+        config%max_channels = 256
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+        config%concatenate = .false.
+
+        net = autoencoder_init(config)
+
+        allocate(input(1, 3, 32, 32))
+        call random_number(input)
+
+        call autoencoder_forward(net, input, 0.0, latent, output)
+
+        ! Latent should be (1, 256, 4, 4)
+        if (size(latent, 1) /= 1 .or. size(latent, 2) /= 256 .or. &
+            size(latent, 3) /= 4 .or. size(latent, 4) /= 4) then
+            print *, "FAIL autoencoder_forward_addition: latent shape wrong", &
+                     size(latent, 1), size(latent, 2), size(latent, 3), size(latent, 4)
+            error stop
+        end if
+
+        ! Output should match input dimensions
+        if (size(output, 1) /= 1 .or. size(output, 2) /= 3 .or. &
+            size(output, 3) /= 32 .or. size(output, 4) /= 32) then
+            print *, "FAIL autoencoder_forward_addition: output shape wrong", &
+                     size(output, 1), size(output, 2), size(output, 3), size(output, 4)
+            error stop
+        end if
+
+        ! Output should be in [0, 1] due to sigmoid
+        if (minval(output) < 0.0 .or. maxval(output) > 1.0) then
+            print *, "FAIL autoencoder_forward_addition: output not in [0,1]"
+            error stop
+        end if
+
+        print *, "PASS: autoencoder_forward (addition mode)"
+    end subroutine
+
+    subroutine test_autoencoder_backward_addition()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+        real, allocatable :: input(:,:,:,:), target(:,:,:,:)
+        real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
+        real, allocatable :: grad_loss(:,:,:,:)
+
+        config%input_channels = 1
+        config%num_layers = 2
+        config%base_channels = 8
+        config%max_channels = 32
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+        config%concatenate = .false.
+
+        net = autoencoder_init(config)
+
+        allocate(input(1, 1, 8, 8))
+        allocate(target(1, 1, 8, 8))
+        call random_number(input)
+        call random_number(target)
+
+        call autoencoder_forward(net, input, 0.0, latent, output)
+
+        allocate(grad_loss, mold=output)
+        grad_loss = 2.0 * (output - target) / size(output)
+
+        call autoencoder_backward(net, output, grad_loss)
+
+        ! Verify all layers received gradients
+        if (maxval(abs(net%encoder(1)%weights_grad)) < 1e-10) then
+            print *, "FAIL autoencoder_backward_addition: encoder gradients are zero"
+            error stop
+        end if
+
+        if (maxval(abs(net%decoder(1)%weights_grad)) < 1e-10) then
+            print *, "FAIL autoencoder_backward_addition: decoder gradients are zero"
+            error stop
+        end if
+
+        if (maxval(abs(net%skip_projection(1)%weights_grad)) < 1e-10) then
+            print *, "FAIL autoencoder_backward_addition: skip_projection gradients are zero"
+            error stop
+        end if
+
+        print *, "PASS: autoencoder_backward (addition mode)"
+    end subroutine
+
+    subroutine test_training_addition()
+        type(autoencoder_config) :: config
+        type(autoencoder) :: net
+        real, allocatable :: images(:,:,:,:)
+        real, allocatable :: latent(:,:,:,:), output(:,:,:,:)
+        real :: loss_before, loss_after
+        real :: lr
+        integer :: epoch, i, j, k
+        real, allocatable :: grad_loss(:,:,:,:)
+
+        config%input_channels = 1
+        config%num_layers = 2
+        config%base_channels = 8
+        config%max_channels = 32
+        config%kernel_width = 3
+        config%kernel_height = 3
+        config%stride = 2
+        config%padding = 1
+        config%concatenate = .false.
+
+        net = autoencoder_init(config)
+
+        ! Create small synthetic dataset
+        allocate(images(4, 1, 16, 16))
+        do i = 1, 4
+            do j = 1, 16
+                do k = 1, 16
+                    if (i == 1) images(i, 1, j, k) = real(j) / 16.0
+                    if (i == 2) images(i, 1, j, k) = real(k) / 16.0
+                    if (i == 3) images(i, 1, j, k) = real(j + k) / 32.0
+                    if (i == 4) images(i, 1, j, k) = real(abs(j - k)) / 16.0
+                end do
+            end do
+        end do
+
+        ! Compute loss before training
+        loss_before = 0.0
+        do i = 1, 4
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
+            loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
+        end do
+        loss_before = loss_before / 4.0
+
+        ! Train
+        lr = 0.1
+        do epoch = 1, 100
+            do i = 1, 4
+                call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
+                grad_loss = mse_loss_grad(output, images(i:i,:,:,:))
+                call autoencoder_backward(net, output, grad_loss)
+                call sgd_update_all(net, lr)
+            end do
+        end do
+
+        ! Compute loss after training
+        loss_after = 0.0
+        do i = 1, 4
+            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
+            loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
+        end do
+        loss_after = loss_after / 4.0
+
+        print *, "  addition mode loss before:", loss_before
+        print *, "  addition mode loss after: ", loss_after
+
+        if (loss_after >= loss_before) then
+            print *, "FAIL test_training_addition: loss did not decrease"
+            error stop
+        end if
+
+        print *, "PASS: training (addition mode)"
     end subroutine
 
     subroutine test_mse_loss()
@@ -1587,14 +1851,21 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         ! Create and save
         net1 = autoencoder_init(config)
-        call save_weights(net1, filename)
+        call save_autoencoder(net1, filename)
 
-        ! Create new net and load
-        net2 = autoencoder_init(config)
-        call load_weights(net2, filename)
+        ! Load into new net (config is read from file)
+        net2 = load_autoencoder(filename)
+
+        ! Verify config matches
+        if (net2%config%num_layers /= config%num_layers .or. &
+            net2%config%concatenate .neqv. config%concatenate) then
+            print *, "FAIL save_load_weights: config mismatch"
+            error stop
+        end if
 
         ! Verify weights match
         max_err = 0.0
@@ -1635,6 +1906,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1814,6 +2086,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
         call set_training(net, .false.)
@@ -1866,6 +2139,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 
@@ -1910,6 +2184,7 @@ contains
         config%kernel_height = 3
         config%stride = 2
         config%padding = 1
+        config%concatenate = .true.
 
         net = autoencoder_init(config)
 

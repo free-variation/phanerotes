@@ -12,27 +12,39 @@ program train_full_images
     character(len=64) :: training_dir, arg
     integer :: i, j, k, idx, num_images, channels, width, height, unit_num, ios
     integer :: tile_width, tile_height, tiles_x, tiles_y, tiles_per_image, total_tiles, batch_size
+    logical :: use_concatenate
+    character(len=16) :: mode_str
 
     ! Parse arguments
     if (command_argument_count() < 1) then
-        print *, "Usage: train_full_images <tile_width> [tile_height]"
+        print *, "Usage: train_full_images <tile_width> [tile_height] [--add|--concat]"
         print *, "  tile_width  - width of tiles (e.g., 512)"
         print *, "  tile_height - height of tiles (default: same as width)"
+        print *, "  --add       - use addition for skip connections"
+        print *, "  --concat    - use concatenation for skip connections (default)"
         print *, "Examples:"
-        print *, "  train_full_images 512        # 512x512 square tiles"
-        print *, "  train_full_images 576 384    # 576x384 (3:2) tiles"
+        print *, "  train_full_images 512              # 512x512 square tiles, concat mode"
+        print *, "  train_full_images 576 384          # 576x384 (3:2) tiles, concat mode"
+        print *, "  train_full_images 512 512 --add    # 512x512 tiles, addition mode"
         stop 1
     end if
 
     call get_command_argument(1, arg)
     read(arg, *) tile_width
 
-    if (command_argument_count() >= 2) then
-        call get_command_argument(2, arg)
-        read(arg, *) tile_height
-    else
-        tile_height = tile_width
-    end if
+    tile_height = tile_width
+    use_concatenate = .true.
+
+    do i = 2, command_argument_count()
+        call get_command_argument(i, arg)
+        if (trim(arg) == "--add") then
+            use_concatenate = .false.
+        else if (trim(arg) == "--concat") then
+            use_concatenate = .true.
+        else
+            read(arg, *) tile_height
+        end if
+    end do
 
     training_dir = "images/training_data/"
     batch_size = 8
@@ -102,7 +114,14 @@ program train_full_images
     config%kernel_height = 3
     config%stride = 2
     config%padding = 1
+    config%concatenate = use_concatenate
 
+    if (use_concatenate) then
+        mode_str = "concat"
+    else
+        mode_str = "add"
+    end if
+    print *, "Skip connection mode:", trim(mode_str)
     print *, "Initializing autoencoder..."
     net = autoencoder_init(config)
 
@@ -110,8 +129,8 @@ program train_full_images
     print *, "Training..."
     call train_network(net, tiles, batch_size, 10, 0.01, 0.2)
 
-    write(filename, '(A,I0,A,I0,A)') "ae-weights-", tile_width, "x", tile_height, ".bin"
-    call save_weights(net, trim(filename))
+    write(filename, '(A,I0,A,I0,A,A,A)') "ae-weights-", tile_width, "x", tile_height, "-", trim(mode_str), ".bin"
+    call save_autoencoder(net, trim(filename))
     print *, "Saved weights to ", trim(filename)
 
 end program

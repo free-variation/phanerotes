@@ -4,7 +4,6 @@ program reconstruct_image
     use omp_lib
     implicit none
 
-    type(autoencoder_config) :: config
     type(autoencoder) :: net
     real, allocatable :: img(:,:,:), reconstructed(:,:,:)
     real, allocatable :: tile(:,:,:,:), latent(:,:,:,:), output(:,:,:,:)
@@ -14,22 +13,10 @@ program reconstruct_image
     integer :: n, total_tiles
     logical :: success
 
-    config%input_channels = 3
-    config%num_layers = 3
-    config%base_channels = 32
-    config%max_channels = 128
-    config%kernel_width = 3
-    config%kernel_height = 3
-    config%stride = 2
-    config%padding = 1
-
     tile_size = 512
 
-    print *, "Initializing autoencoder..."
-    net = autoencoder_init(config)
-
-    print *, "Loading weights from models/ae-weights-512.bin..."
-    call load_weights(net, "models/ae-weights-512.bin")
+    print *, "Loading autoencoder from models/ae-weights-512.bin..."
+    net = load_autoencoder("models/ae-weights-512.bin")
     call set_training(net, .false.)
 
     print *, "Loading image..."
