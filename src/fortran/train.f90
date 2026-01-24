@@ -55,10 +55,11 @@ module train
             integer :: epoch, batch_start, batch_end, num_samples, num_batches, batch_num
             real, allocatable :: latent(:, :,:,:), output(:, :,:,:)
             real, allocatable :: grad_loss(:, :,:,:)
-            real :: total_loss, t_start, t_end
+            real :: total_loss
+            integer(8) :: t_start, t_end, count_rate
             character(len=256) :: checkpoint_file
 
-            ! Layout: (channels, height, width, batch) - batch is dimension 4
+            call system_clock(count_rate=count_rate)
             num_samples = size(images, 4)
             num_batches = (num_samples + batch_size - 1) / batch_size
 
@@ -67,11 +68,10 @@ module train
                 batch_num = 0
 
                 do batch_start = 1, num_samples, batch_size
-                    call cpu_time(t_start)
+                    call system_clock(t_start)
                     batch_end = min(batch_start + batch_size - 1, num_samples)
                     batch_num = batch_num + 1
 
-                    ! Layout: (channels, height, width, batch)
                     call autoencoder_forward(net, images(:,:,:,batch_start:batch_end), dropout_rate, latent, output)
 
                     total_loss = total_loss + mse_loss(output, images(:,:,:,batch_start:batch_end))
@@ -79,9 +79,10 @@ module train
                     call autoencoder_backward(net, output, grad_loss)
                     call sgd_update_all(net, learning_rate)
 
-                    call cpu_time(t_end)
+                    call system_clock(t_end)
                     print '(A,I0,A,I0,A,I0,A,F6.2,A)', &
-                        "  batch ", batch_num, "/", num_batches, " (epoch ", epoch, ") ", t_end - t_start, "s"
+                        "  batch ", batch_num, "/", num_batches, " (epoch ", epoch, ") ", &
+                        real(t_end - t_start) / real(count_rate), "s"
                 end do
 
                 print *, "epoch", epoch, "loss:", total_loss/num_samples
