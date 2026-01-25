@@ -22,12 +22,17 @@ program make_video
     integer :: latent_size, current, best_next, k
     real :: best_sim, sim
 
+    ! Multi-image support
+    integer :: num_images, img_idx, tiles_per_image, tile_offset, unit_num, ios
+    character(len=512) :: image_file
+    character(len=512), allocatable :: image_files(:)
+
     ! Video parameters
     integer :: fps, duration, total_frames, frames_per_transition, num_transitions
     integer :: frame_num, trans, f
     real :: t
     real, allocatable :: frame(:,:,:)
-    character(len=256) :: frame_file, cmd, input_image, output_video, model_file, arg
+    character(len=256) :: frame_file, cmd, input_dir, output_video, model_file, arg
     logical :: success
     integer :: sharpen_mode   ! 0=none, 1=sharpen
     integer :: interp_mode    ! 0=pixel, 1=latent
@@ -36,7 +41,7 @@ program make_video
 
     ! Parse arguments
     if (command_argument_count() < 3) then
-        print *, "Usage: make_video <model_file> <image_file> <tile_width> [options]"
+        print *, "Usage: make_video <model_file> <image_dir> <tile_width> [options]"
         print *, "Options:"
         print *, "  --height N   - tile height (default: same as width)"
         print *, "  --frames N   - total frames (default: 7200)"
@@ -50,7 +55,7 @@ program make_video
     end if
 
     call get_command_argument(1, model_file)
-    call get_command_argument(2, input_image)
+    call get_command_argument(2, input_dir)
     call get_command_argument(3, arg)
     read(arg, *) tile_width
     tile_height = tile_width
@@ -108,7 +113,7 @@ program make_video
     write(output_video, '(A,I0,A,I0,A)') "video_", output_width, "x", output_height, ".mp4"
 
     print *, "Model:", trim(model_file)
-    print *, "Input:", trim(input_image)
+    print *, "Input dir:", trim(input_dir)
     print *, "Output:", trim(output_video)
     print *, "Sharpening:", merge("enabled ", "disabled", sharpen_mode == 1)
     print *, "Interpolation:", merge("latent", "pixel ", interp_mode == 1)
@@ -117,9 +122,32 @@ program make_video
     net = load_autoencoder(trim(model_file))
     call set_training(net, .false.)
 
-    print *, "Loading image..."
-    img = load_image(trim(input_image))
-    ! Image layout: (channels, height, width)
+    ! List images in directory
+    call execute_command_line("ls " // trim(input_dir) // " > /tmp/video_image_list.txt")
+
+    ! Count images
+    num_images = 0
+    open(newunit=unit_num, file="/tmp/video_image_list.txt", status="old")
+    do
+        read(unit_num, '(A)', iostat=ios) image_file
+        if (ios /= 0) exit
+        num_images = num_images + 1
+    end do
+    close(unit_num)
+    print *, "Found", num_images, "images"
+
+    ! Read image filenames
+    allocate(image_files(num_images))
+    open(newunit=unit_num, file="/tmp/video_image_list.txt", status="old")
+    do i = 1, num_images
+        read(unit_num, '(A)') image_files(i)
+        image_files(i) = trim(input_dir) // "/" // trim(image_files(i))
+    end do
+    close(unit_num)
+
+    ! Load first image to get dimensions
+    print *, "Loading first image to get dimensions..."
+    img = load_image(trim(image_files(1)))
     channels = size(img, 1)
     height = size(img, 2)
     width = size(img, 3)
@@ -127,8 +155,10 @@ program make_video
 
     tiles_x = width / tile_width
     tiles_y = height / tile_height
-    num_tiles = tiles_x * tiles_y
-    print *, "Tiles:", tiles_x, "x", tiles_y, "=", num_tiles
+    tiles_per_image = tiles_x * tiles_y
+    num_tiles = tiles_per_image * num_images
+    print *, "Tiles per image:", tiles_x, "x", tiles_y, "=", tiles_per_image
+    print *, "Total tiles:", num_tiles
 
     ! Number of transitions is num_tiles - 1 (for pairs: 1+2, 2+3, ..., (n-1)+n)
     num_transitions = num_tiles - 1
@@ -139,7 +169,7 @@ program make_video
     ! Extract tiles and compute latents
     print *, "Processing tiles..."
 
-    ! First pass to get latent dimensions
+    ! First pass to get latent dimensions (using already-loaded first image)
     ! Tile layout: (channels, tile_height, tile_width, batch)
     allocate(tile(channels, tile_height, tile_width, 1))
     tile(:, :, :, 1) = img(:, 1:tile_height, 1:tile_width)
@@ -156,39 +186,46 @@ program make_video
     end if
     deallocate(tile)
 
-    !$omp parallel do private(n, i, j, k, x_start, x_end, y_start, y_end, tile, latent, output, tile_acts) schedule(dynamic)
-    do n = 1, num_tiles
-        i = mod(n - 1, tiles_x) + 1
-        j = (n - 1) / tiles_x + 1
-
-        x_start = (i-1) * tile_width + 1
-        x_end = i * tile_width
-        y_start = (j-1) * tile_height + 1
-        y_end = j * tile_height
-
-        allocate(tile(channels, tile_height, tile_width, 1))
-        ! img is (channels, height, width), extract tile
-        tile(:, :, :, 1) = img(:, y_start:y_end, x_start:x_end)
-        call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
-
-        all_latents(n, :, :, :, :) = latent
-        all_outputs(n, :, :, :, :) = output
-        latent_flat(n, :) = reshape(latent(:,:,:,1), [latent_size])
-        norms(n) = sqrt(sum(latent_flat(n, :)**2))
-
-        if (interp_mode == 1) then
-            do k = 1, net%config%num_layers - 1
-                encoder_acts(n, k)%tensor = tile_acts(k)%tensor
-            end do
+    ! Process all images
+    do img_idx = 1, num_images
+        if (img_idx > 1) then
+            img = load_image(trim(image_files(img_idx)))
         end if
+        print '(A,I0,A,I0,A,A)', "  Image ", img_idx, "/", num_images, ": ", trim(image_files(img_idx))
 
-        deallocate(tile)
+        tile_offset = (img_idx - 1) * tiles_per_image
 
-        !$omp critical
-        print '(A,I0,A,I0)', "  Tile ", n, "/", num_tiles
-        !$omp end critical
+        !$omp parallel do private(n, i, j, k, x_start, x_end, y_start, y_end, tile, latent, output, tile_acts) schedule(dynamic)
+        do n = 1, tiles_per_image
+            i = mod(n - 1, tiles_x) + 1
+            j = (n - 1) / tiles_x + 1
+
+            x_start = (i-1) * tile_width + 1
+            x_end = i * tile_width
+            y_start = (j-1) * tile_height + 1
+            y_end = j * tile_height
+
+            allocate(tile(channels, tile_height, tile_width, 1))
+            ! img is (channels, height, width), extract tile
+            tile(:, :, :, 1) = img(:, y_start:y_end, x_start:x_end)
+            call autoencoder_forward(net, tile, 0.0, latent, output, tile_acts)
+
+            all_latents(tile_offset + n, :, :, :, :) = latent
+            all_outputs(tile_offset + n, :, :, :, :) = output
+            latent_flat(tile_offset + n, :) = reshape(latent(:,:,:,1), [latent_size])
+            norms(tile_offset + n) = sqrt(sum(latent_flat(tile_offset + n, :)**2))
+
+            if (interp_mode == 1) then
+                do k = 1, net%config%num_layers - 1
+                    encoder_acts(tile_offset + n, k)%tensor = tile_acts(k)%tensor
+                end do
+            end if
+
+            deallocate(tile)
+        end do
+        !$omp end parallel do
     end do
-    !$omp end parallel do
+    print *, "Processed", num_tiles, "tiles total"
 
     ! Build sequence using cosine similarity (greedy nearest neighbor)
     print *, "Building sequence..."
@@ -220,7 +257,7 @@ program make_video
 
         sequence(n) = best_next
         used(best_next) = .true.
-        print '(A,I0,A,I0,A,F6.3)', "  Step ", n, ": tile ", best_next, " (sim=", best_sim, ")"
+        print '(A,I0,A,I0,A,F6.3,A)', "  Step ", n, ": tile ", best_next, " (sim=", best_sim, ")"
     end do
 
     ! Create frames directory
