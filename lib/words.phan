@@ -1,0 +1,3 @@
+: ls list_files repeat s. cr ;
+: 2dup over over ;
+
