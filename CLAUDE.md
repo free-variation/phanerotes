@@ -23,3 +23,16 @@ fpm run --example <program_name> --profile release --flag "-march=native -ffast-
 Tensor layout is `(channels, height, width, batch)` - Fortran column-major order.
 
 im2col orders columns with width varying fastest (row-major spatial). Use `order=[1,3,2]` in reshape to match this when converting between matrix and tensor forms.
+
+## Testing
+
+Tests go in `/test/`, not in `/example/`. Uses test-drive framework:
+- Test modules named `test_<module>.f90`
+- Public `collect_<module>_tests(testsuite)` subroutine
+- Each test is a subroutine taking `error_type` output
+- Use `check(error, condition, message)` for assertions
+
+Run tests with:
+```bash
+fpm test --profile release --flag "-march=native -ffast-math -fopenmp"
+```

@@ -30,8 +30,8 @@ echo "Sample rate: $SAMPLE_RATE, Hop: $HOP, Overlap: $OVERLAP" >&2
 # Extract spectral stats
 ffmpeg -i "$AUDIO" -af "aspectralstats=win_size=2048:overlap=$OVERLAP:measure=centroid+spread+flux+flatness+rolloff,ametadata=print:file=$SPECTRAL" -f null - 2>/dev/null
 
-# Extract amplitude stats
-ffmpeg -i "$AUDIO" -af "astats=metadata=1:reset=$HOP,ametadata=print:file=$AMPLITUDE" -f null - 2>/dev/null
+# Extract amplitude stats (force frame size to match fps, reset every frame)
+ffmpeg -i "$AUDIO" -af "asetnsamples=n=$HOP,astats=metadata=1:reset=1,ametadata=print:file=$AMPLITUDE" -f null - 2>/dev/null
 
 # Parse and combine into CSV
 awk '
@@ -74,15 +74,18 @@ FNR==NR {
 }
 END {
     for (f = 0; f <= max_frame; f++) {
-        printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", \
-            f, times[f], \
-            centroid_l[f], centroid_r[f], \
-            spread_l[f], spread_r[f], \
-            flux_l[f], flux_r[f], \
-            flatness_l[f], flatness_r[f], \
-            rolloff_l[f], rolloff_r[f], \
-            rms_l[f], rms_r[f], \
-            peak_l[f], peak_r[f]
+        # Only output frames that have both spectral and amplitude data
+        if (centroid_l[f] != "" && rms_l[f] != "") {
+            printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", \
+                f, times[f], \
+                centroid_l[f], centroid_r[f], \
+                spread_l[f], spread_r[f], \
+                flux_l[f], flux_r[f], \
+                flatness_l[f], flatness_r[f], \
+                rolloff_l[f], rolloff_r[f], \
+                rms_l[f], rms_r[f], \
+                peak_l[f], peak_r[f]
+        }
     }
 }
 ' "$SPECTRAL" "$AMPLITUDE" > "$OUTPUT"

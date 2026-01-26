@@ -2,90 +2,161 @@ module interpreter
     use :: command
     implicit none
 
-contains
+    type :: word_definition
+        character(MAX_STRING_LENGTH) :: name
+        character(MAX_STRING_LENGTH) :: tokens(128)
+        integer :: num_tokens
+    end type
 
-    subroutine execute_line(line, running)
-        character(*), intent(in) :: line
-        logical, intent(inout) :: running
-        character(MAX_STRING_LENGTH) :: token
-        integer :: pos
+    integer, parameter :: MAX_WORDS = 256
+    type(word_definition) :: dictionary(MAX_WORDS)
+    integer :: compiling = 0
+    integer :: num_words = 0
 
-        pos = 1
-        do while (pos <= len_trim(line))
-            call next_token(line, pos, token)
-            if (len_trim(token) == 0) exit
+    contains
+        subroutine execute_line(line, running)
+            character(*), intent(in) :: line
+            logical, intent(inout) :: running
 
-            call dispatch(token, running)
-            if (.not. running) exit
-        end do
-    end subroutine
+            character(MAX_STRING_LENGTH), allocatable :: tokens(:)
 
-    subroutine next_token(line, pos, token)
-        character(*), intent(in) :: line
-        integer, intent(inout) :: pos
-        character(*), intent(out) :: token
-        integer :: start, line_len
+            tokens = tokenize(line)
+            call dispatch_tokens(tokens, running)
+        end subroutine
 
-        token = ""
-        line_len = len_trim(line)
+        recursive subroutine dispatch_tokens(tokens, running)
+            character(*), intent(in) :: tokens(:)
+            logical, intent(inout) :: running
 
-        ! skip whitespace
-        do while (pos <= line_len)
-            if (line(pos:pos) /= ' ') exit
-            pos = pos + 1
-        end do
+            integer :: i, repeats = 1
 
-        if (pos > line_len) return
+            if (size(tokens) == 0) return
 
-        ! comment - rest of line ignored
-        if (line(pos:pos) == "#") return
+            if (compiling == 1) then
+                dictionary(num_words)%name = tokens(1)
+                dictionary(num_words)%num_tokens = 0
+                compiling = 2
+            else if (compiling == 2) then
+                if (tokens(1) == ";") then
+                    compiling = 0
+                else
+                    dictionary(num_words)%num_tokens = dictionary(num_words)%num_tokens + 1
+                    dictionary(num_words)%tokens(dictionary(num_words)%num_tokens) = tokens(1)
+                end if
+            else
+                call dispatch(tokens(1), running, repeats)
+                if (.not. running) return
+            end if
 
-        ! string literal
-        if (line(pos:pos) == '"') then
-            pos = pos + 1
-            start = pos
+            do i = 1, repeats
+                call dispatch_tokens(tokens(2:), running)
+                if (.not. running) exit
+            end do
+
+        end subroutine
+
+        function tokenize(line)
+            character(*), intent(in) :: line
+            character(MAX_STRING_LENGTH), allocatable :: tokenize(:)
+
+            character(MAX_STRING_LENGTH) :: token
+            integer :: pos, num_tokens, i
+
+            pos = 1
+            num_tokens = 0
+            do while (pos <= len_trim(line))
+                call next_token(line, pos, token)
+                if (len_trim(token) == 0) exit
+
+                num_tokens = num_tokens + 1
+            end do
+
+            allocate(tokenize(num_tokens))
+
+            pos = 1
+            do i = 1, num_tokens
+                call next_token(line, pos, tokenize(i))
+            end do
+        end function
+
+        subroutine next_token(line, pos, token)
+            character(*), intent(in) :: line
+            integer, intent(inout) :: pos
+            character(*), intent(out) :: token
+            integer :: start, line_len
+
+            token = ""
+            line_len = len_trim(line)
+
+            ! skip whitespace
             do while (pos <= line_len)
-                if (line(pos:pos) == '"') exit
+                if (line(pos:pos) /= ' ') exit
                 pos = pos + 1
             end do
 
-            token = '"' // line(start:pos-1)
-            if (pos <= line_len) pos = pos + 1
-            return
-        end if
+            if (pos > line_len) return
 
-        ! regular token
-        start = pos
-        do while (pos <= line_len)
-            if (line(pos:pos) == ' ') exit
-            pos = pos + 1
-        end do
-        token = line(start:pos-1)
-    end subroutine
+            ! comment - rest of line ignored
+            if (line(pos:pos) == "#") return
 
-    subroutine dispatch(token, running)
-        character(*), intent(in) :: token
-        logical, intent(inout) :: running
-        real :: num
-        integer :: iostat
+            ! string literal
+            if (line(pos:pos) == '"') then
+                pos = pos + 1
+                start = pos
+                do while (pos <= line_len)
+                    if (line(pos:pos) == '"') exit
+                    pos = pos + 1
+                end do
 
-        if (len_trim(token) == 0) return
+                token = '"' // line(start:pos-1)
+                if (pos <= line_len) pos = pos + 1
+                return
+            end if
 
-        ! string literal
-        if (token(1:1) == '"') then
-            call push_string(token(2:))
-            return
-        end if
+            ! regular token
+            start = pos
+            do while (pos <= line_len)
+                if (line(pos:pos) == ' ') exit
+                pos = pos + 1
+            end do
+            token = line(start:pos-1)
+        end subroutine
 
-        ! try as a number
-        read(token, *, iostat = iostat) num
-        if (iostat == 0) then
-            call push_number(num)
-            return
-        end if
+        subroutine dispatch(token, running, repeats)
+            character(*), intent(in) :: token
+            logical, intent(inout) :: running
+            integer, intent(out) :: repeats
 
-        ! words
-        select case (trim(token))
+            real :: num
+            integer :: iostat
+            integer :: i
+
+            repeats = 1
+
+            if (len_trim(token) == 0) return
+
+            ! string literal
+            if (token(1:1) == '"') then
+                call push_string(token(2:))
+                return
+            end if
+
+            ! try as a number
+            read(token, *, iostat = iostat) num
+            if (iostat == 0) then
+                call push_number(num)
+                return
+            end if
+
+            do i = 1, num_words
+                if (dictionary(i)%name == token) then
+                    call dispatch_tokens(dictionary(i)%tokens(1:dictionary(i)%num_tokens), running)
+                    return
+                end if
+            end do
+
+            ! words
+            select case (trim(token))
             case ("quit")
                 running = .false.
             case ("dup")
@@ -96,6 +167,18 @@ contains
                 call swap_image()
             case ("over")
                 call over_image()
+            case (".")
+                call dot()
+            case ("s.")
+                call sdot()
+            case ("cr")
+                print *
+            case ("repeat")
+                repeats = int(pop_number())
+            case (":")
+                compiling = 1
+                num_words = num_words + 1
+
             case ("load")
                 call load()
             case ("save")
@@ -112,9 +195,15 @@ contains
                 call split()
             case ("merge")
                 call merge()
+            case ("list_files")
+                call list_files()
+            case ("interpolate")
+                call interpolate()
+            case ("interpolate_frames")
+                call interpolate_frames()
             case default
                 print *, "unknown word: ", trim(token)
-        end select
-    end subroutine
+            end select
+        end subroutine
 
-end module interpreter
+    end module interpreter

@@ -92,14 +92,15 @@ contains
         integer :: i, j, errors
 
         ! batch=1, 1 channel, 4x4 input, 2x2 kernel, stride 2, no padding
-        allocate(input(1, 1, 4, 4))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 4, 4, 1))
         do j = 1, 4
             do i = 1, 4
-                input(1, 1, i, j) = real((j - 1) * 4 + i)
+                input(1, j, i, 1) = real((j - 1) * 4 + i)
             end do
         end do
 
-        result = im2col(input, 2, 2, 2, 0)
+        call im2col(input, 2, 2, 2, 0, result)
 
         expected(:, 1) = [1.0, 2.0, 5.0, 6.0]
         expected(:, 2) = [3.0, 4.0, 7.0, 8.0]
@@ -134,12 +135,13 @@ contains
         real, allocatable :: input(:,:,:,:)
         real, allocatable :: result(:,:)
 
-        allocate(input(1, 1, 3, 3))
-        input(1, 1, :, :) = reshape([1.0, 2.0, 3.0, &
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 3, 3, 1))
+        input(1, :, :, 1) = reshape([1.0, 2.0, 3.0, &
                                      4.0, 5.0, 6.0, &
                                      7.0, 8.0, 9.0], [3, 3])
 
-        result = im2col(input, 2, 2, 1, 1)
+        call im2col(input, 2, 2, 1, 1, result)
 
         if (size(result, 1) /= 4 .or. size(result, 2) /= 16) then
             print *, "FAIL im2col_padding: wrong dimensions"
@@ -165,11 +167,12 @@ contains
         integer :: batch_size, out_w, out_h
 
         ! batch=3, 2 channels, 4x4 input, 2x2 kernel, stride 2, no padding
+        ! Layout: (channels, height, width, batch)
         batch_size = 3
-        allocate(input(batch_size, 2, 4, 4))
+        allocate(input(2, 4, 4, batch_size))
         call random_number(input)
 
-        result = im2col(input, 2, 2, 2, 0)
+        call im2col(input, 2, 2, 2, 0, result)
 
         out_w = 2
         out_h = 2
@@ -193,16 +196,17 @@ contains
         real :: max_err
 
         ! batch=3, 1 channel, 4x4 input, 2x2 kernel, stride 2 (non-overlapping)
+        ! Layout: (channels, height, width, batch)
         batch_size = 3
-        allocate(input(batch_size, 1, 4, 4))
+        allocate(input(1, 4, 4, batch_size))
         call random_number(input)
 
-        col = im2col(input, 2, 2, 2, 0)
-        reconstructed = col2im(col, batch_size, 1, 4, 4, 2, 2, 2, 0)
+        call im2col(input, 2, 2, 2, 0, col)
+        call col2im(col, batch_size, 1, 4, 4, 2, 2, 2, 0, reconstructed)
 
-        ! Check dimensions
-        if (size(reconstructed, 1) /= batch_size .or. size(reconstructed, 2) /= 1 .or. &
-            size(reconstructed, 3) /= 4 .or. size(reconstructed, 4) /= 4) then
+        ! Check dimensions: (channels, height, width, batch)
+        if (size(reconstructed, 1) /= 1 .or. size(reconstructed, 2) /= 4 .or. &
+            size(reconstructed, 3) /= 4 .or. size(reconstructed, 4) /= batch_size) then
             print *, "FAIL col2im_batched: wrong dimensions"
             error stop
         end if
@@ -224,20 +228,21 @@ contains
         real, allocatable :: reconstructed(:,:,:,:)
         integer :: i, j, errors
 
-        allocate(input(1, 1, 4, 4))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 4, 4, 1))
         do j = 1, 4
             do i = 1, 4
-                input(1, 1, i, j) = real((j - 1) * 4 + i)
+                input(1, j, i, 1) = real((j - 1) * 4 + i)
             end do
         end do
 
-        col_matrix = im2col(input, 2, 2, 2, 0)
-        reconstructed = col2im(col_matrix, 1, 1, 4, 4, 2, 2, 2, 0)
+        call im2col(input, 2, 2, 2, 0, col_matrix)
+        call col2im(col_matrix, 1, 1, 4, 4, 2, 2, 2, 0, reconstructed)
 
         errors = 0
         do j = 1, 4
             do i = 1, 4
-                if (abs(reconstructed(1, 1, i, j) - input(1, 1, i, j)) > 1e-6) then
+                if (abs(reconstructed(1, j, i, 1) - input(1, j, i, 1)) > 1e-6) then
                     errors = errors + 1
                 end if
             end do
@@ -261,13 +266,14 @@ contains
         allocate(col_matrix(4, 4))
         col_matrix = 1.0
 
-        result = col2im(col_matrix, 1, 1, 3, 3, 2, 2, 1, 0)
+        call col2im(col_matrix, 1, 1, 3, 3, 2, 2, 1, 0, result)
 
         ! Center (2,2) should accumulate 4x, edges 2x, corners 1x
+        ! Layout: (channels, height, width, batch)
         if (abs(result(1, 1, 1, 1) - 1.0) > 1e-6 .or. &
             abs(result(1, 1, 2, 1) - 2.0) > 1e-6 .or. &
-            abs(result(1, 1, 2, 2) - 4.0) > 1e-6 .or. &
-            abs(result(1, 1, 3, 3) - 1.0) > 1e-6) then
+            abs(result(1, 2, 2, 1) - 4.0) > 1e-6 .or. &
+            abs(result(1, 3, 3, 1) - 1.0) > 1e-6) then
             print *, "FAIL col2im_accumulation: wrong values"
             error stop
         end if
@@ -308,16 +314,17 @@ contains
 
         ok = .false.
 
-        allocate(input(1, nc, w, h))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(nc, h, w, 1))
         do c = 1, nc
             do j = 1, h
                 do i = 1, w
-                    input(1, c, i, j) = real(c * 1000 + j * 100 + i)
+                    input(c, j, i, 1) = real(c * 1000 + j * 100 + i)
                 end do
             end do
         end do
 
-        col = im2col(input, kw, kh, stride, pad)
+        call im2col(input, kw, kh, stride, pad, col)
 
         out_w = (w + 2*pad - kw) / stride + 1
         out_h = (h + 2*pad - kh) / stride + 1
@@ -327,16 +334,16 @@ contains
             return
         end if
 
-        output = col2im(col, 1, nc, w, h, kw, kh, stride, pad)
+        call col2im(col, 1, nc, w, h, kw, kh, stride, pad, output)
 
-        if (size(output, 1) /= 1 .or. size(output, 2) /= nc .or. &
-            size(output, 3) /= w .or. size(output, 4) /= h) then
+        if (size(output, 1) /= nc .or. size(output, 2) /= h .or. &
+            size(output, 3) /= w .or. size(output, 4) /= 1) then
             print *, "  FAIL config: col2im dims"
             return
         end if
 
         if (stride >= kw .and. stride >= kh .and. pad == 0) then
-            max_err = maxval(abs(output(1,:,:,:) - input(1,:,:,:)))
+            max_err = maxval(abs(output(:,:,:,1) - input(:,:,:,1)))
             if (max_err > 1e-5) then
                 print *, "  FAIL config: roundtrip error =", max_err
                 return
@@ -364,6 +371,7 @@ contains
         allocate(layer%bias(out_c))
         allocate(layer%weights_grad(out_c, in_c, kw, kh))
         allocate(layer%bias_grad(out_c))
+        layer%training = .true.
 
         layer%weights = 0.0
         layer%bias = 0.0
@@ -382,7 +390,8 @@ contains
         call random_number(layer%bias)
 
         ! batch=1, 16x16 input
-        allocate(input(1, 3, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(3, 16, 16, 1))
         call random_number(input)
 
         call conv_forward(layer, input, output)
@@ -390,9 +399,9 @@ contains
         out_w = (16 + 2*1 - 3) / 1 + 1  ! = 16
         out_h = (16 + 2*1 - 3) / 1 + 1  ! = 16
 
-        if (size(output, 1) /= 1 .or. size(output, 2) /= 8 .or. &
-            size(output, 3) /= 16 .or. size(output, 4) /= 16) then
-            print *, "FAIL conv_forward_dimensions: expected (1,8,16,16), got", &
+        if (size(output, 1) /= 8 .or. size(output, 2) /= 16 .or. &
+            size(output, 3) /= 16 .or. size(output, 4) /= 1) then
+            print *, "FAIL conv_forward_dimensions: expected (8,16,16,1), got", &
                      size(output,1), size(output,2), size(output,3), size(output,4)
             error stop
         end if
@@ -410,17 +419,19 @@ contains
         call random_number(layer%weights)
         layer%bias = [1.0, 2.0, 3.0, 4.0]
 
-        allocate(input(1, 2, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(2, 8, 8, 1))
         input = 0.0
 
         call conv_forward(layer, input, output)
 
         ! Output should equal bias at every spatial position
+        ! Layout: (channels, height, width, batch)
         max_err = 0.0
         do oc = 1, 4
-            do oj = 1, size(output, 4)
+            do oj = 1, size(output, 2)
                 do oi = 1, size(output, 3)
-                    max_err = max(max_err, abs(output(1, oc, oi, oj) - layer%bias(oc)))
+                    max_err = max(max_err, abs(output(oc, oj, oi, 1) - layer%bias(oc)))
                 end do
             end do
         end do
@@ -447,13 +458,14 @@ contains
         layer%weights = 1.0
         layer%bias = [0.5]
 
-        allocate(input(1, 1, 3, 3))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 3, 3, 1))
         input = 1.0
 
         call conv_forward(layer, input, output)
 
         ! Output should be 2x2, all 4.5
-        if (size(output, 3) /= 2 .or. size(output, 4) /= 2) then
+        if (size(output, 2) /= 2 .or. size(output, 3) /= 2) then
             print *, "FAIL conv_forward_known_values: wrong output size"
             error stop
         end if
@@ -461,8 +473,8 @@ contains
         expected = 4.0 + 0.5
         if (abs(output(1,1,1,1) - expected) > 1e-5 .or. &
             abs(output(1,1,2,1) - expected) > 1e-5 .or. &
-            abs(output(1,1,1,2) - expected) > 1e-5 .or. &
-            abs(output(1,1,2,2) - expected) > 1e-5) then
+            abs(output(1,2,1,1) - expected) > 1e-5 .or. &
+            abs(output(1,2,2,1) - expected) > 1e-5) then
             print *, "FAIL conv_forward_known_values: expected", expected, "got", output
             error stop
         end if
@@ -491,7 +503,8 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input(1, in_c, w, h))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(in_c, h, w, 1))
         call random_number(input)
 
         ! Run conv_forward
@@ -501,11 +514,11 @@ contains
         out_w = (w + 2*pad - kw) / stride + 1
         out_h = (h + 2*pad - kh) / stride + 1
 
-        allocate(padded(in_c, w + 2*pad, h + 2*pad))
+        allocate(padded(in_c, h + 2*pad, w + 2*pad))
         padded = 0.0
-        padded(:, pad+1:pad+w, pad+1:pad+h) = input(1, :, :, :)
+        padded(:, pad+1:pad+h, pad+1:pad+w) = input(:, :, :, 1)
 
-        allocate(expected(1, out_c, out_w, out_h))
+        allocate(expected(out_c, out_h, out_w, 1))
 
         do oc = 1, out_c
             do oj = 1, out_h
@@ -515,11 +528,11 @@ contains
                         do kj = 1, kh
                             do ki = 1, kw
                                 sum_val = sum_val + layer%weights(oc, ic, ki, kj) * &
-                                          padded(ic, (oi-1)*stride + ki, (oj-1)*stride + kj)
+                                          padded(ic, (oj-1)*stride + kj, (oi-1)*stride + ki)
                             end do
                         end do
                     end do
-                    expected(1, oc, oi, oj) = sum_val
+                    expected(oc, oj, oi, 1) = sum_val
                 end do
             end do
         end do
@@ -544,7 +557,8 @@ contains
         call random_number(layer%weights)
         layer%bias = 0.0  ! Zero bias for pure linearity test
 
-        allocate(input(1, 2, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(2, 8, 8, 1))
         call random_number(input)
 
         alpha = 2.5
@@ -577,19 +591,20 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input(1, 3, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(3, 16, 16, 1))
         call random_number(input)
 
         call conv_forward(layer, input, output)
 
-        allocate(grad_output(1, 8, 16, 16))
+        allocate(grad_output(8, 16, 16, 1))
         call random_number(grad_output)
 
         call conv_backward(layer, grad_output, grad_input)
 
-        ! Check grad_input dimensions match input
-        if (size(grad_input, 1) /= 1 .or. size(grad_input, 2) /= 3 .or. &
-            size(grad_input, 3) /= 16 .or. size(grad_input, 4) /= 16) then
+        ! Check grad_input dimensions match input: (channels, height, width, batch)
+        if (size(grad_input, 1) /= 3 .or. size(grad_input, 2) /= 16 .or. &
+            size(grad_input, 3) /= 16 .or. size(grad_input, 4) /= 1) then
             print *, "FAIL conv_backward_dimensions: grad_input shape wrong"
             error stop
         end if
@@ -619,12 +634,13 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input(1, 2, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(2, 8, 8, 1))
         call random_number(input)
 
         call conv_forward(layer, input, output)
 
-        allocate(grad_output(1, 4, 8, 8))
+        allocate(grad_output(4, 8, 8, 1))
         grad_output = 0.0
 
         call conv_backward(layer, grad_output, grad_input)
@@ -663,7 +679,8 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input(1, 2, 4, 4))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(2, 4, 4, 1))
         call random_number(input)
 
         ! Forward pass to get output shape
@@ -729,7 +746,8 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input(1, 2, 4, 4))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(2, 4, 4, 1))
         call random_number(input)
 
         call conv_forward(layer, input, output)
@@ -781,7 +799,8 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input(1, 2, 4, 4))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(2, 4, 4, 1))
         call random_number(input)
 
         call conv_forward(layer, input, output)
@@ -792,23 +811,24 @@ contains
         call conv_backward(layer, grad_output, grad_input)
 
         ! Check a subset of input gradients
+        ! Layout: (channels, height, width, batch)
         do ic = 1, 2
-            do ii = 1, 3
-                do ij = 1, 3
-                    original_input = input(1, ic, ii, ij)
+            do ij = 1, 3
+                do ii = 1, 3
+                    original_input = input(ic, ij, ii, 1)
 
-                    input(1, ic, ii, ij) = original_input + eps
+                    input(ic, ij, ii, 1) = original_input + eps
                     call conv_forward(layer, input, output_plus)
                     loss_plus = sum(output_plus)
 
-                    input(1, ic, ii, ij) = original_input - eps
+                    input(ic, ij, ii, 1) = original_input - eps
                     call conv_forward(layer, input, output_minus)
                     loss_minus = sum(output_minus)
 
-                    input(1, ic, ii, ij) = original_input
+                    input(ic, ij, ii, 1) = original_input
 
                     numerical_grad = (loss_plus - loss_minus) / (2.0 * eps)
-                    analytical_grad = grad_input(1, ic, ii, ij)
+                    analytical_grad = grad_input(ic, ij, ii, 1)
 
                     max_err = max(max_err, abs(numerical_grad - analytical_grad))
                 end do
@@ -826,31 +846,34 @@ contains
     ! ============ activation tests ============
 
     subroutine test_relu_forward()
-        real :: input(1, 2, 3, 3), output(1, 2, 3, 3)
+        ! Layout: (channels, height, width, batch)
+        real :: input(2, 3, 3, 1), output(2, 3, 3, 1)
 
-        input(1, 1, :, :) = reshape([-1.0, 0.0, 1.0, &
+        ! reshape fills column-major: (h=1,w=1), (h=2,w=1), (h=3,w=1), (h=1,w=2), ...
+        ! So row 1 (h=1) values are: -1.0, -2.0, -0.1 at widths 1, 2, 3
+        input(1, :, :, 1) = reshape([-1.0, 0.0, 1.0, &
                                      -2.0, 0.5, 2.0, &
                                      -0.1, 0.0, 0.1], [3, 3])
-        input(1, 2, :, :) = reshape([1.0, -1.0, 0.0, &
+        input(2, :, :, 1) = reshape([1.0, -1.0, 0.0, &
                                      3.0, -3.0, 0.0, &
                                      0.5, -0.5, 0.0], [3, 3])
 
         output = relu_forward(input)
 
-        ! Check negatives become zero
-        if (output(1, 1, 1, 1) /= 0.0 .or. output(1, 1, 1, 2) /= 0.0 .or. output(1, 1, 1, 3) /= 0.0) then
+        ! Check negatives become zero (channel 1, row h=1: -1, -2, -0.1 at widths 1,2,3)
+        if (output(1, 1, 1, 1) /= 0.0 .or. output(1, 1, 2, 1) /= 0.0 .or. output(1, 1, 3, 1) /= 0.0) then
             print *, "FAIL relu_forward: negatives not zeroed"
             error stop
         end if
 
-        ! Check positives pass through
-        if (abs(output(1, 1, 3, 1) - 1.0) > 1e-6 .or. abs(output(1, 1, 3, 2) - 2.0) > 1e-6) then
+        ! Check positives pass through (channel 1: (h=3,w=1)=1.0, (h=3,w=2)=2.0)
+        if (abs(output(1, 3, 1, 1) - 1.0) > 1e-6 .or. abs(output(1, 3, 2, 1) - 2.0) > 1e-6) then
             print *, "FAIL relu_forward: positives not passed"
             error stop
         end if
 
-        ! Check zeros stay zero
-        if (output(1, 1, 2, 1) /= 0.0 .or. output(1, 2, 3, 1) /= 0.0) then
+        ! Check zeros stay zero (channel 1: (h=2,w=1)=0.0, channel 2: (h=3,w=1)=0.0)
+        if (output(1, 2, 1, 1) /= 0.0 .or. output(2, 3, 1, 1) /= 0.0) then
             print *, "FAIL relu_forward: zeros changed"
             error stop
         end if
@@ -859,10 +882,11 @@ contains
     end subroutine
 
     subroutine test_relu_backward()
-        real :: x(1, 1, 4, 1), grad_out(1, 1, 4, 1), grad_in(1, 1, 4, 1)
+        ! Layout: (channels, height, width, batch)
+        real :: x(1, 4, 1, 1), grad_out(1, 4, 1, 1), grad_in(1, 4, 1, 1)
 
-        x(1, 1, :, 1) = [-1.0, 0.0, 1.0, 2.0]
-        grad_out(1, 1, :, 1) = [5.0, 5.0, 5.0, 5.0]
+        x(1, :, 1, 1) = [-1.0, 0.0, 1.0, 2.0]
+        grad_out(1, :, 1, 1) = [5.0, 5.0, 5.0, 5.0]
 
         grad_in = relu_backward(x, grad_out)
 
@@ -873,13 +897,13 @@ contains
         end if
 
         ! Zero x -> gradient blocked (x > 0 is false)
-        if (grad_in(1, 1, 2, 1) /= 0.0) then
+        if (grad_in(1, 2, 1, 1) /= 0.0) then
             print *, "FAIL relu_backward: gradient not blocked for zero"
             error stop
         end if
 
         ! Positive x -> gradient passes
-        if (abs(grad_in(1, 1, 3, 1) - 5.0) > 1e-6 .or. abs(grad_in(1, 1, 4, 1) - 5.0) > 1e-6) then
+        if (abs(grad_in(1, 3, 1, 1) - 5.0) > 1e-6 .or. abs(grad_in(1, 4, 1, 1) - 5.0) > 1e-6) then
             print *, "FAIL relu_backward: gradient not passed for positive"
             error stop
         end if
@@ -888,9 +912,10 @@ contains
     end subroutine
 
     subroutine test_sigmoid_forward()
-        real :: input(1, 1, 3, 1), output(1, 1, 3, 1)
+        ! Layout: (channels, height, width, batch)
+        real :: input(1, 3, 1, 1), output(1, 3, 1, 1)
 
-        input(1, 1, :, 1) = [0.0, 10.0, -10.0]
+        input(1, :, 1, 1) = [0.0, 10.0, -10.0]
 
         output = sigmoid_forward(input)
 
@@ -901,14 +926,14 @@ contains
         end if
 
         ! sigmoid(10) ~ 1
-        if (abs(output(1, 1, 2, 1) - 1.0) > 1e-4) then
-            print *, "FAIL sigmoid_forward: sigmoid(10) not near 1, got", output(1, 1, 2, 1)
+        if (abs(output(1, 2, 1, 1) - 1.0) > 1e-4) then
+            print *, "FAIL sigmoid_forward: sigmoid(10) not near 1, got", output(1, 2, 1, 1)
             error stop
         end if
 
         ! sigmoid(-10) ~ 0
-        if (abs(output(1, 1, 3, 1)) > 1e-4) then
-            print *, "FAIL sigmoid_forward: sigmoid(-10) not near 0, got", output(1, 1, 3, 1)
+        if (abs(output(1, 3, 1, 1)) > 1e-4) then
+            print *, "FAIL sigmoid_forward: sigmoid(-10) not near 0, got", output(1, 3, 1, 1)
             error stop
         end if
 
@@ -924,13 +949,14 @@ contains
         eps = 1e-4
         max_err = 0.0
 
-        allocate(x(1, 1, 4, 4))
+        ! Layout: (channels, height, width, batch)
+        allocate(x(1, 4, 4, 1))
         call random_number(x)
         x = x * 4.0 - 2.0  ! range [-2, 2]
 
         y = sigmoid_forward(x)
 
-        allocate(grad_out(1, 1, 4, 4))
+        allocate(grad_out(1, 4, 4, 1))
         grad_out = 1.0
 
         grad_in = sigmoid_backward(y, grad_out)
@@ -938,13 +964,13 @@ contains
         ! Numerical check
         do j = 1, 4
             do i = 1, 4
-                y_plus = 1.0 / (1.0 + exp(-(x(1, 1, i, j) + eps)))
-                y_minus = 1.0 / (1.0 + exp(-(x(1, 1, i, j) - eps)))
+                y_plus = 1.0 / (1.0 + exp(-(x(1, j, i, 1) + eps)))
+                y_minus = 1.0 / (1.0 + exp(-(x(1, j, i, 1) - eps)))
                 loss_plus = y_plus
                 loss_minus = y_minus
 
                 numerical_grad = (loss_plus - loss_minus) / (2.0 * eps)
-                analytical_grad = grad_in(1, 1, i, j)
+                analytical_grad = grad_in(1, j, i, 1)
 
                 max_err = max(max_err, abs(numerical_grad - analytical_grad))
             end do
@@ -963,14 +989,15 @@ contains
     subroutine test_upsample_dimensions()
         real, allocatable :: input(:,:,:,:), output(:,:,:,:)
 
-        allocate(input(1, 3, 4, 5))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(3, 4, 5, 1))
         call random_number(input)
 
         output = upsample(input, 2)
 
-        if (size(output, 1) /= 1 .or. size(output, 2) /= 3 .or. &
-            size(output, 3) /= 8 .or. size(output, 4) /= 10) then
-            print *, "FAIL upsample_dimensions: expected (1,3,8,10), got", &
+        if (size(output, 1) /= 3 .or. size(output, 2) /= 8 .or. &
+            size(output, 3) /= 10 .or. size(output, 4) /= 1) then
+            print *, "FAIL upsample_dimensions: expected (3,8,10,1), got", &
                      size(output,1), size(output,2), size(output,3), size(output,4)
             error stop
         end if
@@ -979,37 +1006,38 @@ contains
     end subroutine
 
     subroutine test_upsample_values()
-        real :: input(1, 1, 2, 2), output(1, 1, 4, 4)
+        ! Layout: (channels, height, width, batch)
+        real :: input(1, 2, 2, 1), output(1, 4, 4, 1)
 
-        input(1, 1, :, :) = reshape([1.0, 2.0, 3.0, 4.0], [2, 2])
+        input(1, :, :, 1) = reshape([1.0, 2.0, 3.0, 4.0], [2, 2])
 
         output = upsample(input, 2)
 
         ! Each input value should be replicated in a 2x2 block
         ! input(1,1) = 1.0 -> output(1:2, 1:2) = 1.0
-        if (output(1,1,1,1) /= 1.0 .or. output(1,1,2,1) /= 1.0 .or. &
-            output(1,1,1,2) /= 1.0 .or. output(1,1,2,2) /= 1.0) then
+        if (output(1,1,1,1) /= 1.0 .or. output(1,2,1,1) /= 1.0 .or. &
+            output(1,1,2,1) /= 1.0 .or. output(1,2,2,1) /= 1.0) then
             print *, "FAIL upsample_values: top-left block wrong"
             error stop
         end if
 
         ! input(2,1) = 2.0 -> output(3:4, 1:2) = 2.0
-        if (output(1,1,3,1) /= 2.0 .or. output(1,1,4,1) /= 2.0 .or. &
-            output(1,1,3,2) /= 2.0 .or. output(1,1,4,2) /= 2.0) then
+        if (output(1,3,1,1) /= 2.0 .or. output(1,4,1,1) /= 2.0 .or. &
+            output(1,3,2,1) /= 2.0 .or. output(1,4,2,1) /= 2.0) then
             print *, "FAIL upsample_values: top-right block wrong"
             error stop
         end if
 
         ! input(1,2) = 3.0 -> output(1:2, 3:4) = 3.0
-        if (output(1,1,1,3) /= 3.0 .or. output(1,1,2,3) /= 3.0 .or. &
-            output(1,1,1,4) /= 3.0 .or. output(1,1,2,4) /= 3.0) then
+        if (output(1,1,3,1) /= 3.0 .or. output(1,2,3,1) /= 3.0 .or. &
+            output(1,1,4,1) /= 3.0 .or. output(1,2,4,1) /= 3.0) then
             print *, "FAIL upsample_values: bottom-left block wrong"
             error stop
         end if
 
         ! input(2,2) = 4.0 -> output(3:4, 3:4) = 4.0
-        if (output(1,1,3,3) /= 4.0 .or. output(1,1,4,3) /= 4.0 .or. &
-            output(1,1,3,4) /= 4.0 .or. output(1,1,4,4) /= 4.0) then
+        if (output(1,3,3,1) /= 4.0 .or. output(1,4,3,1) /= 4.0 .or. &
+            output(1,3,4,1) /= 4.0 .or. output(1,4,4,1) /= 4.0) then
             print *, "FAIL upsample_values: bottom-right block wrong"
             error stop
         end if
@@ -1020,14 +1048,15 @@ contains
     subroutine test_upsample_backward_dimensions()
         real, allocatable :: grad_output(:,:,:,:), grad_input(:,:,:,:)
 
-        allocate(grad_output(1, 3, 8, 10))
+        ! Layout: (channels, height, width, batch)
+        allocate(grad_output(3, 8, 10, 1))
         call random_number(grad_output)
 
         grad_input = upsample_backward(grad_output, 2)
 
-        if (size(grad_input, 1) /= 1 .or. size(grad_input, 2) /= 3 .or. &
-            size(grad_input, 3) /= 4 .or. size(grad_input, 4) /= 5) then
-            print *, "FAIL upsample_backward_dimensions: expected (1,3,4,5), got", &
+        if (size(grad_input, 1) /= 3 .or. size(grad_input, 2) /= 4 .or. &
+            size(grad_input, 3) /= 5 .or. size(grad_input, 4) /= 1) then
+            print *, "FAIL upsample_backward_dimensions: expected (3,4,5,1), got", &
                      size(grad_input,1), size(grad_input,2), size(grad_input,3), size(grad_input,4)
             error stop
         end if
@@ -1036,13 +1065,14 @@ contains
     end subroutine
 
     subroutine test_upsample_backward_values()
-        real :: grad_output(1, 1, 4, 4), grad_input(1, 1, 2, 2)
+        ! Layout: (channels, height, width, batch)
+        real :: grad_output(1, 4, 4, 1), grad_input(1, 2, 2, 1)
 
         ! Set each 2x2 block to different values that sum to known results
-        grad_output(1, 1, 1:2, 1:2) = 1.0  ! sum = 4
-        grad_output(1, 1, 3:4, 1:2) = 2.0  ! sum = 8
-        grad_output(1, 1, 1:2, 3:4) = 0.5  ! sum = 2
-        grad_output(1, 1, 3:4, 3:4) = 0.25 ! sum = 1
+        grad_output(1, 1:2, 1:2, 1) = 1.0  ! sum = 4
+        grad_output(1, 3:4, 1:2, 1) = 2.0  ! sum = 8
+        grad_output(1, 1:2, 3:4, 1) = 0.5  ! sum = 2
+        grad_output(1, 3:4, 3:4, 1) = 0.25 ! sum = 1
 
         grad_input = upsample_backward(grad_output, 2)
 
@@ -1051,18 +1081,18 @@ contains
             error stop
         end if
 
-        if (abs(grad_input(1,1,2,1) - 8.0) > 1e-6) then
-            print *, "FAIL upsample_backward_values: (2,1) expected 8.0, got", grad_input(1,1,2,1)
+        if (abs(grad_input(1,2,1,1) - 8.0) > 1e-6) then
+            print *, "FAIL upsample_backward_values: (2,1) expected 8.0, got", grad_input(1,2,1,1)
             error stop
         end if
 
-        if (abs(grad_input(1,1,1,2) - 2.0) > 1e-6) then
-            print *, "FAIL upsample_backward_values: (1,2) expected 2.0, got", grad_input(1,1,1,2)
+        if (abs(grad_input(1,1,2,1) - 2.0) > 1e-6) then
+            print *, "FAIL upsample_backward_values: (1,2) expected 2.0, got", grad_input(1,1,2,1)
             error stop
         end if
 
-        if (abs(grad_input(1,1,2,2) - 1.0) > 1e-6) then
-            print *, "FAIL upsample_backward_values: (2,2) expected 1.0, got", grad_input(1,1,2,2)
+        if (abs(grad_input(1,2,2,1) - 1.0) > 1e-6) then
+            print *, "FAIL upsample_backward_values: (2,2) expected 1.0, got", grad_input(1,2,2,1)
             error stop
         end if
 
@@ -1072,17 +1102,18 @@ contains
     subroutine test_upsample_roundtrip()
         ! If we upsample then backward with grad=1, each input contributes to factor^2 outputs
         ! So backward(ones, factor) should give factor^2 at each position
+        ! Layout: (channels, height, width, batch)
         real, allocatable :: input(:,:,:,:), upsampled(:,:,:,:), grad(:,:,:,:)
         integer :: factor
 
         factor = 3
 
-        allocate(input(1, 2, 4, 5))
+        allocate(input(2, 4, 5, 1))
         call random_number(input)
 
         upsampled = upsample(input, factor)
 
-        allocate(grad(1, 2, 4*factor, 5*factor))
+        allocate(grad(2, 4*factor, 5*factor, 1))
         grad = 1.0
 
         ! backward of all-ones gives factor^2 at each input position
@@ -1309,22 +1340,23 @@ contains
         net = autoencoder_init(config)
 
         ! Input: batch=1, 32x32x3, after 3 stride-2 layers: 4x4
-        allocate(input(1, 3, 32, 32))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(3, 32, 32, 1))
         call random_number(input)
 
         call autoencoder_forward(net, input, 0.0, latent, output)
 
-        ! Latent should be (1, max_channels, 4, 4) after 3 stride-2 downsamples
-        if (size(latent, 1) /= 1 .or. size(latent, 2) /= 256 .or. &
-            size(latent, 3) /= 4 .or. size(latent, 4) /= 4) then
+        ! Latent should be (max_channels, 4, 4, 1) after 3 stride-2 downsamples
+        if (size(latent, 1) /= 256 .or. size(latent, 2) /= 4 .or. &
+            size(latent, 3) /= 4 .or. size(latent, 4) /= 1) then
             print *, "FAIL autoencoder_forward_dimensions: latent shape wrong", &
                      size(latent, 1), size(latent, 2), size(latent, 3), size(latent, 4)
             error stop
         end if
 
         ! Output should match input dimensions
-        if (size(output, 1) /= 1 .or. size(output, 2) /= 3 .or. &
-            size(output, 3) /= 32 .or. size(output, 4) /= 32) then
+        if (size(output, 1) /= 3 .or. size(output, 2) /= 32 .or. &
+            size(output, 3) /= 32 .or. size(output, 4) /= 1) then
             print *, "FAIL autoencoder_forward_dimensions: output shape wrong", &
                      size(output, 1), size(output, 2), size(output, 3), size(output, 4)
             error stop
@@ -1351,7 +1383,8 @@ contains
 
         net = autoencoder_init(config)
 
-        allocate(input(1, 1, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 16, 16, 1))
         call random_number(input)
 
         call autoencoder_forward(net, input, 0.0, latent, output)
@@ -1387,8 +1420,9 @@ contains
 
         net = autoencoder_init(config)
 
-        allocate(input(1, 1, 8, 8))
-        allocate(target(1, 1, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 8, 8, 1))
+        allocate(target(1, 8, 8, 1))
         call random_number(input)
         call random_number(target)
 
@@ -1430,12 +1464,13 @@ contains
 
         net = autoencoder_init(config)
 
-        allocate(input(2, 3, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(3, 16, 16, 2))
         call random_number(input)
 
         call autoencoder_forward(net, input, 0.5, latent, output)
 
-        if (size(output, 1) /= 2 .or. size(output, 2) /= 3) then
+        if (size(output, 1) /= 3 .or. size(output, 4) /= 2) then
             print *, "FAIL: autoencoder_forward_dropout output shape wrong"
             error stop
         end if
@@ -1545,22 +1580,23 @@ contains
 
         net = autoencoder_init(config)
 
-        allocate(input(1, 3, 32, 32))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(3, 32, 32, 1))
         call random_number(input)
 
         call autoencoder_forward(net, input, 0.0, latent, output)
 
-        ! Latent should be (1, 256, 4, 4)
-        if (size(latent, 1) /= 1 .or. size(latent, 2) /= 256 .or. &
-            size(latent, 3) /= 4 .or. size(latent, 4) /= 4) then
+        ! Latent should be (256, 4, 4, 1)
+        if (size(latent, 1) /= 256 .or. size(latent, 2) /= 4 .or. &
+            size(latent, 3) /= 4 .or. size(latent, 4) /= 1) then
             print *, "FAIL autoencoder_forward_addition: latent shape wrong", &
                      size(latent, 1), size(latent, 2), size(latent, 3), size(latent, 4)
             error stop
         end if
 
         ! Output should match input dimensions
-        if (size(output, 1) /= 1 .or. size(output, 2) /= 3 .or. &
-            size(output, 3) /= 32 .or. size(output, 4) /= 32) then
+        if (size(output, 1) /= 3 .or. size(output, 2) /= 32 .or. &
+            size(output, 3) /= 32 .or. size(output, 4) /= 1) then
             print *, "FAIL autoencoder_forward_addition: output shape wrong", &
                      size(output, 1), size(output, 2), size(output, 3), size(output, 4)
             error stop
@@ -1594,8 +1630,9 @@ contains
 
         net = autoencoder_init(config)
 
-        allocate(input(1, 1, 8, 8))
-        allocate(target(1, 1, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input(1, 8, 8, 1))
+        allocate(target(1, 8, 8, 1))
         call random_number(input)
         call random_number(target)
 
@@ -1648,14 +1685,15 @@ contains
         net = autoencoder_init(config)
 
         ! Create small synthetic dataset
-        allocate(images(4, 1, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(images(1, 16, 16, 4))
         do i = 1, 4
             do j = 1, 16
                 do k = 1, 16
-                    if (i == 1) images(i, 1, j, k) = real(j) / 16.0
-                    if (i == 2) images(i, 1, j, k) = real(k) / 16.0
-                    if (i == 3) images(i, 1, j, k) = real(j + k) / 32.0
-                    if (i == 4) images(i, 1, j, k) = real(abs(j - k)) / 16.0
+                    if (i == 1) images(1, j, k, i) = real(j) / 16.0
+                    if (i == 2) images(1, j, k, i) = real(k) / 16.0
+                    if (i == 3) images(1, j, k, i) = real(j + k) / 32.0
+                    if (i == 4) images(1, j, k, i) = real(abs(j - k)) / 16.0
                 end do
             end do
         end do
@@ -1663,8 +1701,8 @@ contains
         ! Compute loss before training
         loss_before = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-            loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            loss_before = loss_before + mse_loss(output, images(:,:,:,i:i))
         end do
         loss_before = loss_before / 4.0
 
@@ -1672,8 +1710,8 @@ contains
         lr = 0.1
         do epoch = 1, 100
             do i = 1, 4
-                call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-                grad_loss = mse_loss_grad(output, images(i:i,:,:,:))
+                call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+                grad_loss = mse_loss_grad(output, images(:,:,:,i:i))
                 call autoencoder_backward(net, output, grad_loss)
                 call sgd_update_all(net, lr)
             end do
@@ -1682,8 +1720,8 @@ contains
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-            loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            loss_after = loss_after + mse_loss(output, images(:,:,:,i:i))
         end do
         loss_after = loss_after / 4.0
 
@@ -1699,7 +1737,8 @@ contains
     end subroutine
 
     subroutine test_mse_loss()
-        real :: output(1, 1, 2, 2), target(1, 1, 2, 2)
+        ! Layout: (channels, height, width, batch)
+        real :: output(1, 2, 2, 1), target(1, 2, 2, 1)
         real :: loss, expected
 
         ! Test 1: identical output and target -> loss = 0
@@ -1715,7 +1754,7 @@ contains
         ! output = [1, 2, 3, 4], target = [0, 0, 0, 0]
         ! errors = [1, 2, 3, 4], squared = [1, 4, 9, 16], sum = 30
         ! mse = 30 / 4 = 7.5
-        output(1, 1, :, :) = reshape([1.0, 2.0, 3.0, 4.0], [2, 2])
+        output(1, :, :, 1) = reshape([1.0, 2.0, 3.0, 4.0], [2, 2])
         target = 0.0
         loss = mse_loss(output, target)
         expected = 30.0 / 4.0
@@ -1740,7 +1779,8 @@ contains
     end subroutine
 
     subroutine test_mse_loss_grad()
-        real :: output(1, 1, 2, 2), target(1, 1, 2, 2)
+        ! Layout: (channels, height, width, batch)
+        real :: output(1, 2, 2, 1), target(1, 2, 2, 1)
         real, allocatable :: grad(:,:,:,:)
         real :: expected_grad
 
@@ -1754,8 +1794,8 @@ contains
         end if
 
         ! Test 2: correct shape
-        if (size(grad, 1) /= 1 .or. size(grad, 2) /= 1 .or. &
-            size(grad, 3) /= 2 .or. size(grad, 4) /= 2) then
+        if (size(grad, 1) /= 1 .or. size(grad, 2) /= 2 .or. &
+            size(grad, 3) /= 2 .or. size(grad, 4) /= 1) then
             print *, "FAIL mse_loss_grad: wrong shape"
             error stop
         end if
@@ -1776,13 +1816,13 @@ contains
         ! output = [0, 1, 2, 3], target = [1, 1, 1, 1]
         ! diff = [-1, 0, 1, 2]
         ! grad = 2 * diff / 4 = [-0.5, 0, 0.5, 1.0]
-        output(1, 1, :, :) = reshape([0.0, 1.0, 2.0, 3.0], [2, 2])
+        output(1, :, :, 1) = reshape([0.0, 1.0, 2.0, 3.0], [2, 2])
         target = 1.0
         grad = mse_loss_grad(output, target)
         if (abs(grad(1,1,1,1) - (-0.5)) > 1e-6 .or. &
-            abs(grad(1,1,2,1) - 0.0) > 1e-6 .or. &
-            abs(grad(1,1,1,2) - 0.5) > 1e-6 .or. &
-            abs(grad(1,1,2,2) - 1.0) > 1e-6) then
+            abs(grad(1,2,1,1) - 0.0) > 1e-6 .or. &
+            abs(grad(1,1,2,1) - 0.5) > 1e-6 .or. &
+            abs(grad(1,2,2,1) - 1.0) > 1e-6) then
             print *, "FAIL mse_loss_grad: wrong gradient values"
             error stop
         end if
@@ -1912,15 +1952,16 @@ contains
 
         ! Create small synthetic dataset: 4 images, 1 channel, 16x16
         ! Use structured patterns (gradients) instead of random noise
-        allocate(images(4, 1, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(images(1, 16, 16, 4))
         do i = 1, 4
             do j = 1, 16
                 do k = 1, 16
                     ! Different gradient patterns for each image
-                    if (i == 1) images(i, 1, j, k) = real(j) / 16.0
-                    if (i == 2) images(i, 1, j, k) = real(k) / 16.0
-                    if (i == 3) images(i, 1, j, k) = real(j + k) / 32.0
-                    if (i == 4) images(i, 1, j, k) = real(abs(j - k)) / 16.0
+                    if (i == 1) images(1, j, k, i) = real(j) / 16.0
+                    if (i == 2) images(1, j, k, i) = real(k) / 16.0
+                    if (i == 3) images(1, j, k, i) = real(j + k) / 32.0
+                    if (i == 4) images(1, j, k, i) = real(abs(j - k)) / 16.0
                 end do
             end do
         end do
@@ -1928,8 +1969,8 @@ contains
         ! Compute loss before training (using batch size 1)
         loss_before = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-            loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            loss_before = loss_before + mse_loss(output, images(:,:,:,i:i))
         end do
         loss_before = loss_before / 4.0
 
@@ -1937,8 +1978,8 @@ contains
         lr = 0.1
         do epoch = 1, 100
             do i = 1, 4
-                call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-                grad_loss = mse_loss_grad(output, images(i:i,:,:,:))
+                call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+                grad_loss = mse_loss_grad(output, images(:,:,:,i:i))
                 call autoencoder_backward(net, output, grad_loss)
                 call sgd_update_all(net, lr)
             end do
@@ -1947,8 +1988,8 @@ contains
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 4
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-            loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            loss_after = loss_after + mse_loss(output, images(:,:,:,i:i))
         end do
         loss_after = loss_after / 4.0
 
@@ -1980,14 +2021,15 @@ contains
         call random_number(layer%bias)
 
         ! Create batch of inputs
-        allocate(input_batch(batch_size, 3, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(input_batch(3, 16, 16, batch_size))
         call random_number(input_batch)
 
         ! Forward pass on entire batch
         call conv_forward(layer, input_batch, output_batch)
 
         ! Check dimensions
-        if (size(output_batch, 1) /= batch_size) then
+        if (size(output_batch, 4) /= batch_size) then
             print *, "FAIL conv_forward_batched: batch dimension wrong"
             error stop
         end if
@@ -1995,11 +2037,11 @@ contains
         ! Compare each batch element to single-image forward
         max_err = 0.0
         do b = 1, batch_size
-            allocate(input_single(1, 3, 16, 16))
-            input_single(1, :, :, :) = input_batch(b, :, :, :)
+            allocate(input_single(3, 16, 16, 1))
+            input_single(:, :, :, 1) = input_batch(:, :, :, b)
             call conv_forward(layer, input_single, output_single)
 
-            max_err = max(max_err, maxval(abs(output_batch(b:b, :, :, :) - output_single)))
+            max_err = max(max_err, maxval(abs(output_batch(:, :, :, b:b) - output_single)))
             deallocate(input_single, output_single)
         end do
 
@@ -2027,7 +2069,8 @@ contains
         call random_number(layer%weights)
         call random_number(layer%bias)
 
-        allocate(input_batch(batch_size, 2, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input_batch(2, 8, 8, batch_size))
         call random_number(input_batch)
 
         ! Batched forward and backward
@@ -2046,13 +2089,13 @@ contains
         ! Now compute individual gradients and sum them
         layer%weights_grad = 0.0
         layer%bias_grad = 0.0
-        allocate(input_single(1, 2, 8, 8))
-        allocate(grad_output_single(1, size(output_batch,2), size(output_batch,3), size(output_batch,4)))
+        allocate(input_single(2, 8, 8, 1))
+        allocate(grad_output_single(size(output_batch,1), size(output_batch,2), size(output_batch,3), 1))
 
         do b = 1, batch_size
-            input_single(1, :, :, :) = input_batch(b, :, :, :)
+            input_single(:, :, :, 1) = input_batch(:, :, :, b)
             call conv_forward(layer, input_single, output_single)
-            grad_output_single(1, :, :, :) = grad_output_batch(b, :, :, :)
+            grad_output_single(:, :, :, 1) = grad_output_batch(:, :, :, b)
             call conv_backward(layer, grad_output_single, grad_input_single)
 
             weights_grad_sum = weights_grad_sum - layer%weights_grad
@@ -2092,14 +2135,15 @@ contains
         call set_training(net, .false.)
 
         batch_size = 4
-        allocate(input_batch(batch_size, 3, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(input_batch(3, 16, 16, batch_size))
         call random_number(input_batch)
 
         ! Batched forward
         call autoencoder_forward(net, input_batch, 0.0, latent_batch, output_batch)
 
         ! Check batch dimension preserved
-        if (size(output_batch, 1) /= batch_size .or. size(latent_batch, 1) /= batch_size) then
+        if (size(output_batch, 4) /= batch_size .or. size(latent_batch, 4) /= batch_size) then
             print *, "FAIL autoencoder_forward_batched: batch dimension wrong"
             error stop
         end if
@@ -2107,12 +2151,12 @@ contains
         ! Compare to single-image forwards
         max_err = 0.0
         do b = 1, batch_size
-            allocate(input_single(1, 3, 16, 16))
-            input_single(1, :, :, :) = input_batch(b, :, :, :)
+            allocate(input_single(3, 16, 16, 1))
+            input_single(:, :, :, 1) = input_batch(:, :, :, b)
             call autoencoder_forward(net, input_single, 0.0, latent_single, output_single)
 
-            max_err = max(max_err, maxval(abs(output_batch(b:b, :, :, :) - output_single)))
-            max_err = max(max_err, maxval(abs(latent_batch(b:b, :, :, :) - latent_single)))
+            max_err = max(max_err, maxval(abs(output_batch(:, :, :, b:b) - output_single)))
+            max_err = max(max_err, maxval(abs(latent_batch(:, :, :, b:b) - latent_single)))
             deallocate(input_single, latent_single, output_single)
         end do
 
@@ -2144,7 +2188,8 @@ contains
         net = autoencoder_init(config)
 
         batch_size = 3
-        allocate(input_batch(batch_size, 1, 8, 8))
+        ! Layout: (channels, height, width, batch)
+        allocate(input_batch(1, 8, 8, batch_size))
         call random_number(input_batch)
 
         ! Batched forward + backward
@@ -2189,11 +2234,12 @@ contains
         net = autoencoder_init(config)
 
         ! Create dataset: 8 images so we can use batch_size=4
-        allocate(images(8, 1, 16, 16))
+        ! Layout: (channels, height, width, batch)
+        allocate(images(1, 16, 16, 8))
         do i = 1, 8
             do j = 1, 16
                 do k = 1, 16
-                    images(i, 1, j, k) = sin(real(i + j) * 0.3) * cos(real(k) * 0.2) * 0.5 + 0.5
+                    images(1, j, k, i) = sin(real(i + j) * 0.3) * cos(real(k) * 0.2) * 0.5 + 0.5
                 end do
             end do
         end do
@@ -2201,8 +2247,8 @@ contains
         ! Compute loss before training
         loss_before = 0.0
         do i = 1, 8
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-            loss_before = loss_before + mse_loss(output, images(i:i,:,:,:))
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            loss_before = loss_before + mse_loss(output, images(:,:,:,i:i))
         end do
         loss_before = loss_before / 8.0
 
@@ -2213,8 +2259,8 @@ contains
         ! Compute loss after training
         loss_after = 0.0
         do i = 1, 8
-            call autoencoder_forward(net, images(i:i,:,:,:), 0.0, latent, output)
-            loss_after = loss_after + mse_loss(output, images(i:i,:,:,:))
+            call autoencoder_forward(net, images(:,:,:,i:i), 0.0, latent, output)
+            loss_after = loss_after + mse_loss(output, images(:,:,:,i:i))
         end do
         loss_after = loss_after / 8.0
 

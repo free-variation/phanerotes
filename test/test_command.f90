@@ -33,7 +33,15 @@ contains
             new_unittest("cmd_split_rgb", test_cmd_split_rgb), &
             new_unittest("cmd_split_greyscale_noop", test_cmd_split_greyscale_noop), &
             new_unittest("cmd_merge_rgb", test_cmd_merge_rgb), &
-            new_unittest("cmd_split_merge_roundtrip", test_cmd_split_merge_roundtrip) &
+            new_unittest("cmd_split_merge_roundtrip", test_cmd_split_merge_roundtrip), &
+            new_unittest("cmd_fill_rgb", test_cmd_fill_rgb), &
+            new_unittest("cmd_fill_greyscale", test_cmd_fill_greyscale), &
+            new_unittest("cmd_interpolate_blend", test_cmd_interpolate_blend), &
+            new_unittest("cmd_interpolate_alpha_one", test_cmd_interpolate_alpha_one), &
+            new_unittest("cmd_interpolate_alpha_zero", test_cmd_interpolate_alpha_zero), &
+            new_unittest("cmd_interpolate_frames_basic", test_cmd_interpolate_frames_basic), &
+            new_unittest("cmd_interpolate_frames_single", test_cmd_interpolate_frames_single), &
+            new_unittest("cmd_interpolate_frames_zero", test_cmd_interpolate_frames_zero) &
         ]
     end subroutine
 
@@ -293,18 +301,20 @@ contains
         type(error_type), allocatable, intent(out) :: error
         real, allocatable :: img(:,:,:), result(:,:,:)
 
-        allocate(img(1, 3, 2))
-        img(1, 1, :) = 0.1
-        img(1, 2, :) = 0.5
-        img(1, 3, :) = 0.9
+        ! Layout: (channels, height, width)
+        ! Horizontal flip reverses width (dimension 3)
+        allocate(img(1, 2, 3))
+        img(1, :, 1) = 0.1  ! column 1 (width=1) = 0.1
+        img(1, :, 2) = 0.5  ! column 2 (width=2) = 0.5
+        img(1, :, 3) = 0.9  ! column 3 (width=3) = 0.9
 
         call push_image(img)
         call fliph()
         result = pop_image()
 
-        call check(error, all(abs(result(1, 1, :) - 0.9) < 1.0e-6), "left should be old right")
+        call check(error, all(abs(result(1, :, 1) - 0.9) < 1.0e-6), "left should be old right")
         if (allocated(error)) return
-        call check(error, all(abs(result(1, 3, :) - 0.1) < 1.0e-6), "right should be old left")
+        call check(error, all(abs(result(1, :, 3) - 0.1) < 1.0e-6), "right should be old left")
     end subroutine
 
 
@@ -312,18 +322,20 @@ contains
         type(error_type), allocatable, intent(out) :: error
         real, allocatable :: img(:,:,:), result(:,:,:)
 
-        allocate(img(1, 2, 3))
-        img(1, :, 1) = 0.1
-        img(1, :, 2) = 0.5
-        img(1, :, 3) = 0.9
+        ! Layout: (channels, height, width)
+        ! Vertical flip reverses height (dimension 2)
+        allocate(img(1, 3, 2))
+        img(1, 1, :) = 0.1  ! row 1 (height=1) = 0.1
+        img(1, 2, :) = 0.5  ! row 2 (height=2) = 0.5
+        img(1, 3, :) = 0.9  ! row 3 (height=3) = 0.9
 
         call push_image(img)
         call flipv()
         result = pop_image()
 
-        call check(error, all(abs(result(1, :, 1) - 0.9) < 1.0e-6), "top should be old bottom")
+        call check(error, all(abs(result(1, 1, :) - 0.9) < 1.0e-6), "top should be old bottom")
         if (allocated(error)) return
-        call check(error, all(abs(result(1, :, 3) - 0.1) < 1.0e-6), "bottom should be old top")
+        call check(error, all(abs(result(1, 3, :) - 0.1) < 1.0e-6), "bottom should be old top")
     end subroutine
 
 
@@ -481,6 +493,185 @@ contains
         result = pop_image()
 
         call check(error, all(abs(result - img) < 1.0e-6), "roundtrip should preserve image")
+    end subroutine
+
+
+    subroutine test_cmd_fill_rgb(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(3, 4, 4))
+        img = 0.0
+
+        call push_image(img)
+        ! Stack order: r g b (natural order)
+        call push_number(1.0)   ! red
+        call push_number(0.5)   ! green
+        call push_number(0.25)  ! blue
+        call fill()
+
+        result = pop_image()
+
+        call check(error, all(abs(result(1,:,:) - 1.0) < 1.0e-6), "red channel should be 1.0")
+        if (allocated(error)) return
+        call check(error, all(abs(result(2,:,:) - 0.5) < 1.0e-6), "green channel should be 0.5")
+        if (allocated(error)) return
+        call check(error, all(abs(result(3,:,:) - 0.25) < 1.0e-6), "blue channel should be 0.25")
+    end subroutine
+
+
+    subroutine test_cmd_fill_greyscale(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), result(:,:,:)
+
+        allocate(img(1, 3, 3))
+        img = 0.0
+
+        call push_image(img)
+        call push_number(0.7)
+        call fill()
+
+        result = pop_image()
+
+        call check(error, all(abs(result(1,:,:) - 0.7) < 1.0e-6), "greyscale should be 0.7")
+    end subroutine
+
+
+    subroutine test_cmd_interpolate_blend(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:), result(:,:,:)
+
+        ! Layout: (channels, height, width)
+        allocate(img1(1, 3, 3), img2(1, 3, 3))
+        img1 = 1.0
+        img2 = 0.0
+
+        ! Stack: img2 (bottom), img1 (top), then alpha
+        ! interpolate pops: alpha, pixels1, pixels2
+        ! result = alpha*pixels1 + (1-alpha)*pixels2
+        call push_image(img2)
+        call push_image(img1)
+        call push_number(0.5)
+        call interpolate()
+
+        result = pop_image()
+
+        ! 0.5 * 1.0 + 0.5 * 0.0 = 0.5
+        call check(error, all(abs(result - 0.5) < 1.0e-6), "50/50 blend should be 0.5")
+    end subroutine
+
+
+    subroutine test_cmd_interpolate_alpha_one(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:), result(:,:,:)
+
+        allocate(img1(1, 3, 3), img2(1, 3, 3))
+        img1 = 0.8
+        img2 = 0.2
+
+        call push_image(img2)
+        call push_image(img1)
+        call push_number(1.0)  ! alpha=1.0 means 100% pixels1
+        call interpolate()
+
+        result = pop_image()
+
+        ! 1.0 * 0.8 + 0.0 * 0.2 = 0.8
+        call check(error, all(abs(result - 0.8) < 1.0e-6), "alpha=1.0 should return first image")
+    end subroutine
+
+
+    subroutine test_cmd_interpolate_alpha_zero(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:), result(:,:,:)
+
+        allocate(img1(1, 3, 3), img2(1, 3, 3))
+        img1 = 0.8
+        img2 = 0.2
+
+        call push_image(img2)
+        call push_image(img1)
+        call push_number(0.0)  ! alpha=0.0 means 100% pixels2
+        call interpolate()
+
+        result = pop_image()
+
+        ! 0.0 * 0.8 + 1.0 * 0.2 = 0.2
+        call check(error, all(abs(result - 0.2) < 1.0e-6), "alpha=0.0 should return second image")
+    end subroutine
+
+
+    subroutine test_cmd_interpolate_frames_basic(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:)
+        real, allocatable :: r1(:,:,:), r2(:,:,:), r3(:,:,:)
+
+        allocate(img1(1, 2, 2), img2(1, 2, 2))
+        img1 = 1.0
+        img2 = 0.0
+
+        ! Stack: img2 (bottom), img1 (top), then num_frames
+        ! interpolate_frames pops: num_frames, pixels1, pixels2
+        call push_image(img2)
+        call push_image(img1)
+        call push_number(3.0)  ! 3 frames
+        call interpolate_frames()
+
+        ! num_frames = 3 - 1 = 2, loop i = 0 to 2
+        ! i=0: alpha=0.0, result = 0*img1 + 1*img2 = 0.0
+        ! i=1: alpha=0.5, result = 0.5*img1 + 0.5*img2 = 0.5
+        ! i=2: alpha=1.0, result = 1*img1 + 0*img2 = 1.0
+        ! Pushed in order: 0.0, 0.5, 1.0 (top)
+
+        r1 = pop_image()  ! 1.0
+        r2 = pop_image()  ! 0.5
+        r3 = pop_image()  ! 0.0
+
+        call check(error, all(abs(r1 - 1.0) < 1.0e-6), "first pop should be img1 (1.0)")
+        if (allocated(error)) return
+        call check(error, all(abs(r2 - 0.5) < 1.0e-6), "second pop should be blend (0.5)")
+        if (allocated(error)) return
+        call check(error, all(abs(r3 - 0.0) < 1.0e-6), "third pop should be img2 (0.0)")
+    end subroutine
+
+
+    subroutine test_cmd_interpolate_frames_single(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:), result(:,:,:)
+
+        allocate(img1(1, 2, 2), img2(1, 2, 2))
+        img1 = 0.8
+        img2 = 0.2
+
+        call push_image(img2)
+        call push_image(img1)
+        call push_number(1.0)  ! 1 frame
+        call interpolate_frames()
+
+        ! num_frames = 1 - 1 = 0, early return with just pixels1
+        result = pop_image()
+
+        call check(error, all(abs(result - 0.8) < 1.0e-6), "single frame should return pixels1")
+    end subroutine
+
+
+    subroutine test_cmd_interpolate_frames_zero(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:), result(:,:,:)
+
+        allocate(img1(1, 2, 2), img2(1, 2, 2))
+        img1 = 0.7
+        img2 = 0.3
+
+        call push_image(img2)
+        call push_image(img1)
+        call push_number(0.0)  ! 0 frames
+        call interpolate_frames()
+
+        ! num_frames = 0 - 1 = -1, early return with just pixels1
+        result = pop_image()
+
+        call check(error, all(abs(result - 0.7) < 1.0e-6), "zero frames should return pixels1")
     end subroutine
 
 end module test_command

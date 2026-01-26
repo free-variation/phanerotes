@@ -92,16 +92,18 @@ contains
         type(error_type), allocatable, intent(out) :: error
         real, allocatable :: img(:,:,:), result(:,:,:)
 
-        allocate(img(1, 3, 2))
-        img(1, 1, :) = 0.1
-        img(1, 2, :) = 0.5
-        img(1, 3, :) = 0.9
+        ! Layout: (channels, height, width)
+        ! Horizontal flip reverses width (dimension 3)
+        allocate(img(1, 2, 3))
+        img(1, :, 1) = 0.1  ! column 1 (width=1) = 0.1
+        img(1, :, 2) = 0.5  ! column 2 (width=2) = 0.5
+        img(1, :, 3) = 0.9  ! column 3 (width=3) = 0.9
 
         result = flip_image_horizontal(img)
 
-        call check(error, all(abs(result(1, 1, :) - 0.9) < 1.0e-6), "first col should be last")
+        call check(error, all(abs(result(1, :, 1) - 0.9) < 1.0e-6), "first col should be old last")
         if (allocated(error)) return
-        call check(error, all(abs(result(1, 3, :) - 0.1) < 1.0e-6), "last col should be first")
+        call check(error, all(abs(result(1, :, 3) - 0.1) < 1.0e-6), "last col should be old first")
     end subroutine
 
 
@@ -129,16 +131,18 @@ contains
         type(error_type), allocatable, intent(out) :: error
         real, allocatable :: img(:,:,:), result(:,:,:)
 
-        allocate(img(1, 2, 3))
-        img(1, :, 1) = 0.1
-        img(1, :, 2) = 0.5
-        img(1, :, 3) = 0.9
+        ! Layout: (channels, height, width)
+        ! Vertical flip reverses height (dimension 2)
+        allocate(img(1, 3, 2))
+        img(1, 1, :) = 0.1  ! row 1 (height=1) = 0.1
+        img(1, 2, :) = 0.5  ! row 2 (height=2) = 0.5
+        img(1, 3, :) = 0.9  ! row 3 (height=3) = 0.9
 
         result = flip_image_vertical(img)
 
-        call check(error, all(abs(result(1, :, 1) - 0.9) < 1.0e-6), "first row should be last")
+        call check(error, all(abs(result(1, 1, :) - 0.9) < 1.0e-6), "first row should be old last")
         if (allocated(error)) return
-        call check(error, all(abs(result(1, :, 3) - 0.1) < 1.0e-6), "last row should be first")
+        call check(error, all(abs(result(1, 3, :) - 0.1) < 1.0e-6), "last row should be old first")
     end subroutine
 
 
@@ -237,16 +241,17 @@ contains
         real, allocatable :: img(:,:,:), result(:,:,:)
         real :: M(3,3)
 
+        ! Layout: (channels, height, width)
         allocate(img(1, 5, 5))
         img = 0.0
-        img(1, 3, 3) = 1.0  ! center pixel
+        img(1, 3, 3) = 1.0  ! center pixel at height=3, width=3
 
-        M = translation_matrix(1.0, 0.0)  ! shift right by 1
+        M = translation_matrix(1.0, 0.0)  ! shift right by 1 (tx=1, ty=0)
 
         result = affine_transform(img, M)
 
-        ! pixel at (3,3) should now be at (4,3)
-        call check(error, result(1, 4, 3) > 0.5, "pixel should shift right")
+        ! pixel at (height=3, width=3) should now be at (height=3, width=4)
+        call check(error, result(1, 3, 4) > 0.5, "pixel should shift right")
     end subroutine
 
 
@@ -297,20 +302,21 @@ contains
         real, allocatable :: img(:,:,:), result(:,:,:)
         real :: M(3,3)
 
+        ! Layout: (channels, height, width)
         allocate(img(1, 4, 4))
         img = 0.0
-        img(1, 2, 2) = 1.0
+        img(1, 2, 2) = 1.0  ! pixel at height=2, width=2
 
-        ! translate by 0.5 pixels - should spread value via bilinear
+        ! translate by 0.5 pixels horizontally - should spread value via bilinear
         M = translation_matrix(0.5, 0.0)
         result = affine_transform(img, M)
 
-        ! value should be split between (2,2) and (3,2)
+        ! value should be split between width=2 and width=3 at height=2
         call check(error, result(1, 2, 2) > 0.3 .and. result(1, 2, 2) < 0.7, &
-                   "bilinear should split value at source")
+                   "bilinear should split value at source width")
         if (allocated(error)) return
-        call check(error, result(1, 3, 2) > 0.3 .and. result(1, 3, 2) < 0.7, &
-                   "bilinear should split value at dest")
+        call check(error, result(1, 2, 3) > 0.3 .and. result(1, 2, 3) < 0.7, &
+                   "bilinear should split value at dest width")
     end subroutine
 
 

@@ -23,7 +23,12 @@ contains
             new_unittest("token_empty_line", test_token_empty_line), &
             new_unittest("dispatch_number", test_dispatch_number), &
             new_unittest("dispatch_string", test_dispatch_string), &
-            new_unittest("execute_pushes_numbers", test_execute_pushes_numbers) &
+            new_unittest("execute_pushes_numbers", test_execute_pushes_numbers), &
+            new_unittest("repeat_pushes_multiple", test_repeat_pushes_multiple), &
+            new_unittest("list_files_pushes_count", test_list_files_pushes_count), &
+            new_unittest("colon_def_basic", test_colon_def_basic), &
+            new_unittest("colon_def_single_line", test_colon_def_single_line), &
+            new_unittest("colon_def_multiple_words", test_colon_def_multiple_words) &
         ]
     end subroutine
 
@@ -144,10 +149,11 @@ contains
     subroutine test_dispatch_number(error)
         type(error_type), allocatable, intent(out) :: error
         logical :: running
+        integer :: repeats
         real :: result
 
         running = .true.
-        call dispatch("42.5", running)
+        call dispatch("42.5", running, repeats)
         result = pop_number()
 
         call check(error, abs(result - 42.5) < 1.0e-6, "should push number")
@@ -157,10 +163,11 @@ contains
     subroutine test_dispatch_string(error)
         type(error_type), allocatable, intent(out) :: error
         logical :: running
+        integer :: repeats
         character(MAX_STRING_LENGTH) :: result
 
         running = .true.
-        call dispatch('"hello.png', running)
+        call dispatch('"hello.png', running, repeats)
         result = pop_string()
 
         call check(error, trim(result) == "hello.png", "should push string without quote")
@@ -184,6 +191,94 @@ contains
         call check(error, abs(n2 - 2.0) < 1.0e-6, "second number")
         if (allocated(error)) return
         call check(error, abs(n3 - 3.0) < 1.0e-6, "third number")
+    end subroutine
+
+
+    subroutine test_repeat_pushes_multiple(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: running
+        real :: n1, n2, n3
+
+        running = .true.
+        call execute_line("3 repeat 1", running)
+
+        n3 = pop_number()
+        n2 = pop_number()
+        n1 = pop_number()
+
+        call check(error, abs(n1 - 1.0) < 1.0e-6, "first 1")
+        if (allocated(error)) return
+        call check(error, abs(n2 - 1.0) < 1.0e-6, "second 1")
+        if (allocated(error)) return
+        call check(error, abs(n3 - 1.0) < 1.0e-6, "third 1")
+    end subroutine
+
+
+    subroutine test_list_files_pushes_count(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: running
+        real :: count
+
+        running = .true.
+        call execute_line('"test" list_files', running)
+
+        count = pop_number()
+
+        call check(error, count > 0, "should find files in test directory")
+    end subroutine
+
+
+    subroutine test_colon_def_basic(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: running
+        real :: result
+
+        running = .true.
+        call execute_line(": pushfive 5 ;", running)
+        call execute_line("pushfive", running)
+
+        result = pop_number()
+
+        call check(error, abs(result - 5.0) < 1.0e-6, "defined word should push 5")
+    end subroutine
+
+
+    subroutine test_colon_def_single_line(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: running
+        real :: n1, n2
+
+        running = .true.
+        call execute_line(": pushtwo 1 2 ;", running)
+        call execute_line("pushtwo", running)
+
+        n2 = pop_number()
+        n1 = pop_number()
+
+        call check(error, abs(n1 - 1.0) < 1.0e-6, "first number should be 1")
+        if (allocated(error)) return
+        call check(error, abs(n2 - 2.0) < 1.0e-6, "second number should be 2")
+    end subroutine
+
+
+    subroutine test_colon_def_multiple_words(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: running
+        real :: n1, n2, n3
+
+        running = .true.
+        call execute_line(": push3ones 3 repeat 1 ;", running)
+        call execute_line("push3ones", running)
+
+        n3 = pop_number()
+        n2 = pop_number()
+        n1 = pop_number()
+
+        call check(error, abs(n1 - 1.0) < 1.0e-6, "first 1")
+        if (allocated(error)) return
+        call check(error, abs(n2 - 1.0) < 1.0e-6, "second 1")
+        if (allocated(error)) return
+        call check(error, abs(n3 - 1.0) < 1.0e-6, "third 1")
     end subroutine
 
 end module test_interpreter

@@ -4,6 +4,7 @@ program tester
     use test_command, only: collect_command_tests
     use test_image, only: collect_image_tests
     use test_interpreter, only: collect_interpreter_tests
+    use test_utilities, only: collect_utilities_tests
     implicit none
 
     integer :: stat, is
@@ -15,7 +16,8 @@ program tester
     testsuites = [ &
         new_testsuite("command", collect_command_tests), &
         new_testsuite("image", collect_image_tests), &
-        new_testsuite("interpreter", collect_interpreter_tests) &
+        new_testsuite("interpreter", collect_interpreter_tests), &
+        new_testsuite("utilities", collect_utilities_tests) &
     ]
 
     do is = 1, size(testsuites)

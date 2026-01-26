@@ -1,9 +1,10 @@
 module command
     use :: image
+    use :: utilities
 
     implicit none
     
-    integer, parameter :: MAX_STACK = 100
+    integer, parameter :: MAX_STACK = 1000
     integer, parameter :: MAX_STRING_LENGTH = 256
 
     type image_entry 
@@ -110,6 +111,38 @@ module command
             call push_image(pixels1)
             call push_image(pixels2)
         end subroutine over_image
+
+        subroutine dot()
+            real :: number
+
+            number = pop_number()
+            write(*, '(G0, A)', advance='no') number, ' '
+        end subroutine
+
+        subroutine sdot()
+            character(MAX_STRING_LENGTH) :: s
+
+            s = pop_string()
+            write(*, '(A, A)', advance='no') trim(s), ' '
+        end subroutine
+
+        ! ---------- Utility words ----------
+        subroutine list_files()
+            character(MAX_STRING_LENGTH) :: dir
+            character(MAX_STRING_LENGTH), allocatable :: filenames(:)
+
+            integer :: i
+
+            dir = pop_string()
+            filenames = directory_files(dir)
+
+            do i = 1, size(filenames)
+                call push_string(filenames(i))
+            end do
+
+            call push_number(real(size(filenames)))
+        end subroutine
+
 
         ! ---------- Image manipulation words ----------
         subroutine load() 
@@ -244,7 +277,64 @@ module command
             call push_image(pixels)
         end subroutine
 
+        subroutine fill()
+            real, allocatable :: pixels(:,:,:)
+            integer :: num_channels
+
+            pixels = pop_image()
+            num_channels = size(pixels, 1)
+
+            if (num_channels == 4) then
+                pixels(4, :, :) = pop_number()
+            end if 
+
+            if (num_channels >= 3) then
+                pixels(3, :, :) = pop_number()
+                pixels(2, :, :) = pop_number()
+            end if
+
+            pixels(1, :, :) = pop_number()
+
+            call push_image(pixels)
+        end subroutine
+
+        subroutine interpolate()
+            real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
+            real, allocatable :: interpolated_pixels(:,:,:)
+            real :: alpha
+
+            alpha = pop_number()
+            pixels1 = pop_image()
+            pixels2 = pop_image()
+
+            interpolated_pixels = alpha*pixels1 + (1 - alpha) * pixels2
+
+            call push_image(interpolated_pixels)
+        end subroutine
+
+        subroutine interpolate_frames()
+            real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
+            real, allocatable :: interpolated_pixels(:,:,:)
+            integer :: i, num_frames
+            real :: alpha
+
+            num_frames = pop_number() - 1
+            pixels1 = pop_image()
+            if (num_frames <= 0) then
+                call push_image(pixels1)
+                return
+            end if
+
+            pixels2 = pop_image()
+
+            do i = 0, num_frames
+                alpha = real(i) / real(num_frames)
+                interpolated_pixels = alpha*pixels1 + (1 - alpha) * pixels2
+                call push_image(interpolated_pixels)
+            end do
+        end subroutine
 
 
+        ! ---------- Create movies ----------
 
 end module
