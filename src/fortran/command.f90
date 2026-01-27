@@ -87,19 +87,52 @@ module command
         end function
 
         ! ---------- Stack words ----------
+        subroutine dup_number()
+            real :: num
+
+            num = pop_number()
+            call push_number(num)
+            call push_number(num)
+        end subroutine
+
+        subroutine drop_number()
+            real :: discard
+
+            discard = pop_number()
+        end subroutine 
+
+        subroutine swap_number() 
+            real :: num1, num2
+
+            num1 = pop_number()
+            num2 = pop_number()
+            call push_number(num1)
+            call push_number(num2)
+        end subroutine
+
+        subroutine over_number()
+            real :: num1, num2
+
+            num1 = pop_number()
+            num2 = pop_number()
+            call push_number(num2)
+            call push_number(num1)
+            call push_number(num2)
+        end subroutine
+
         subroutine dup_image()
             real, allocatable :: pixels(:, :, :) 
             
             pixels = pop_image()
             call push_image(pixels)
             call push_image(pixels)
-        end subroutine dup_image
+        end subroutine
 
         subroutine drop_image()
             real, allocatable :: discard(:,:,:)
 
             discard = pop_image()
-        end subroutine drop_image
+        end subroutine
 
         subroutine swap_image() 
             real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
@@ -108,7 +141,7 @@ module command
             pixels2 = pop_image()
             call push_image(pixels1)
             call push_image(pixels2)
-        end subroutine swap_image
+        end subroutine 
 
         subroutine over_image()
             real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
@@ -118,7 +151,7 @@ module command
             call push_image(pixels2)
             call push_image(pixels1)
             call push_image(pixels2)
-        end subroutine over_image
+        end subroutine
 
         subroutine dot()
             real :: number

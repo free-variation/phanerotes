@@ -1,3 +1,3 @@
-: ls list_files repeat s. cr ;
-: 2dup over over ;
+: ls list-files repeat s. cr ;
+: i2dup iover iover ;
 

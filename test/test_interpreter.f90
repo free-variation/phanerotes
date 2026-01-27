@@ -39,7 +39,11 @@ contains
             new_unittest("arithmetic_add", test_arithmetic_add), &
             new_unittest("arithmetic_subtract", test_arithmetic_subtract), &
             new_unittest("arithmetic_multiply", test_arithmetic_multiply), &
-            new_unittest("arithmetic_divide", test_arithmetic_divide) &
+            new_unittest("arithmetic_divide", test_arithmetic_divide), &
+            new_unittest("number_dup", test_number_dup), &
+            new_unittest("number_drop", test_number_drop), &
+            new_unittest("number_swap", test_number_swap), &
+            new_unittest("number_over", test_number_over) &
         ]
     end subroutine
 
@@ -490,6 +494,78 @@ contains
 
         ! Forth: "12 4 /" means 12 / 4 = 3
         call check(error, abs(result - 3.0) < 1.0e-6, "12 / 4 = 3")
+    end subroutine
+
+
+    ! dup: ( a -- a a )
+    subroutine test_number_dup(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: quit
+        real :: n1, n2
+
+        quit = .false.
+        call execute_line("42 dup", quit)
+
+        n2 = pop_number()
+        n1 = pop_number()
+
+        call check(error, abs(n1 - 42.0) < 1.0e-6, "first should be 42")
+        if (allocated(error)) return
+        call check(error, abs(n2 - 42.0) < 1.0e-6, "second should be 42")
+    end subroutine
+
+
+    ! drop: ( a -- )
+    subroutine test_number_drop(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: quit
+        real :: result
+
+        quit = .false.
+        call execute_line("1 2 drop", quit)
+
+        result = pop_number()
+
+        call check(error, abs(result - 1.0) < 1.0e-6, "should be 1 after dropping 2")
+    end subroutine
+
+
+    ! swap: ( a b -- b a )
+    subroutine test_number_swap(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: quit
+        real :: n1, n2
+
+        quit = .false.
+        call execute_line("1 2 swap", quit)
+
+        n2 = pop_number()
+        n1 = pop_number()
+
+        call check(error, abs(n1 - 2.0) < 1.0e-6, "first should be 2")
+        if (allocated(error)) return
+        call check(error, abs(n2 - 1.0) < 1.0e-6, "second should be 1")
+    end subroutine
+
+
+    ! over: ( a b -- a b a )
+    subroutine test_number_over(error)
+        type(error_type), allocatable, intent(out) :: error
+        logical :: quit
+        real :: n1, n2, n3
+
+        quit = .false.
+        call execute_line("1 2 over", quit)
+
+        n3 = pop_number()
+        n2 = pop_number()
+        n1 = pop_number()
+
+        call check(error, abs(n1 - 1.0) < 1.0e-6, "bottom should be 1")
+        if (allocated(error)) return
+        call check(error, abs(n2 - 2.0) < 1.0e-6, "middle should be 2")
+        if (allocated(error)) return
+        call check(error, abs(n3 - 1.0) < 1.0e-6, "top should be 1 (copy of bottom)")
     end subroutine
 
 end module test_interpreter
