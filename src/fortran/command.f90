@@ -67,6 +67,14 @@ module command
             number_stack_top = number_stack_top - 1
         end function
 
+        function peek_number()
+            real :: peek_number
+
+            if (number_stack_top == 0) error stop "number stack underflow"
+            
+            peek_number = number_stack(number_stack_top)
+        end function
+
  
         function pop_image() result(pixels)
             real, allocatable :: pixels(:,:,:)
@@ -125,12 +133,11 @@ module command
             s = pop_string()
             write(*, '(A, A)', advance='no') trim(s), ' '
         end subroutine
-
+        
         ! ---------- Utility words ----------
         subroutine list_files()
             character(MAX_STRING_LENGTH) :: dir
             character(MAX_STRING_LENGTH), allocatable :: filenames(:)
-
             integer :: i
 
             dir = pop_string()

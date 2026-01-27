@@ -14,21 +14,25 @@ module interpreter
     integer :: num_words = 0
 
     contains
-        subroutine execute_line(line, running)
+        subroutine execute_line(line, quit)
             character(*), intent(in) :: line
-            logical, intent(inout) :: running
+            logical, intent(inout) :: quit
 
             character(MAX_STRING_LENGTH), allocatable :: tokens(:)
 
             tokens = tokenize(line)
-            call dispatch_tokens(tokens, running)
+            call dispatch_tokens(tokens, quit)
         end subroutine
 
-        recursive subroutine dispatch_tokens(tokens, running)
+        recursive subroutine dispatch_tokens(tokens, quit)
             character(*), intent(in) :: tokens(:)
-            logical, intent(inout) :: running
+            logical, intent(inout) :: quit
 
-            integer :: i, repeats = 1
+            integer :: i, repeats
+            logical :: done
+
+            repeats = 1
+            done = .false.
 
             if (size(tokens) == 0) return
 
@@ -44,13 +48,13 @@ module interpreter
                     dictionary(num_words)%tokens(dictionary(num_words)%num_tokens) = tokens(1)
                 end if
             else
-                call dispatch(tokens(1), running, repeats)
-                if (.not. running) return
+                call dispatch(tokens(1), quit, done, repeats)
+                if (quit .or. done) return
             end if
 
             do i = 1, repeats
-                call dispatch_tokens(tokens(2:), running)
-                if (.not. running) exit
+                call dispatch_tokens(tokens(2:), quit)
+                if (quit) exit
             end do
 
         end subroutine
@@ -122,12 +126,13 @@ module interpreter
             token = line(start:pos-1)
         end subroutine
 
-        subroutine dispatch(token, running, repeats)
+        subroutine dispatch(token, quit, done, repeats)
             character(*), intent(in) :: token
-            logical, intent(inout) :: running
+            logical, intent(inout) :: quit
+            logical, intent(inout) :: done
             integer, intent(out) :: repeats
 
-            real :: num
+            real :: num, b
             integer :: iostat
             integer :: i
 
@@ -141,16 +146,19 @@ module interpreter
                 return
             end if
 
-            ! try as a number
-            read(token, *, iostat = iostat) num
-            if (iostat == 0) then
-                call push_number(num)
-                return
+            ! try as a number (but "/" is a Fortran list-directed terminator, skip it)
+            if (trim(token) /= "/") then
+                read(token, *, iostat = iostat) num
+                if (iostat == 0) then
+                    call push_number(num)
+                    return
+                end if
             end if
 
+            ! if the token is a colon definition, run that and return
             do i = 1, num_words
                 if (dictionary(i)%name == token) then
-                    call dispatch_tokens(dictionary(i)%tokens(1:dictionary(i)%num_tokens), running)
+                    call dispatch_tokens(dictionary(i)%tokens(1:dictionary(i)%num_tokens), quit)
                     return
                 end if
             end do
@@ -158,7 +166,7 @@ module interpreter
             ! words
             select case (trim(token))
             case ("quit")
-                running = .false.
+                quit = .true.
             case ("dup")
                 call dup_image()
             case ("drop")
@@ -175,9 +183,26 @@ module interpreter
                 print *
             case ("repeat")
                 repeats = int(pop_number())
+            case ("0?")
+                if (peek_number() == 0) done = .true.
+            case ("empty-string-stack?")
+                if (string_stack_top == 0) done = .true.
+            case ("empty-image-stack?")
+                if (image_stack_top == 0) done = .true.
             case (":")
                 compiling = 1
                 num_words = num_words + 1
+
+            case("+")
+                call push_number(pop_number() + pop_number())
+            case("-")
+                b = pop_number()
+                call push_number(pop_number() - b)
+            case("*")
+                call push_number(pop_number() * pop_number())
+            case("/")
+                b = pop_number()
+                call push_number(pop_number() / b)
 
             case ("load")
                 call load()
@@ -195,11 +220,11 @@ module interpreter
                 call split()
             case ("merge")
                 call merge()
-            case ("list_files")
+            case ("list-files")
                 call list_files()
             case ("interpolate")
                 call interpolate()
-            case ("interpolate_frames")
+            case ("interpolate-frames")
                 call interpolate_frames()
             case default
                 print *, "unknown word: ", trim(token)

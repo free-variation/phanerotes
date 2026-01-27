@@ -3,26 +3,26 @@ program phanerotes
     implicit none
 
     character(4096) :: line
-    logical :: running
+    logical :: quit
     integer :: iostat, unit_num
 
-    running = .true.
+    quit = .false.
 
-    ! Load prelude
+    ! Load base dictionary
     open(newunit=unit_num, file="lib/words.phan", status="old", iostat=iostat)
     if (iostat == 0) then
-        do while (running)
+        do while (.not. quit)
             read(unit_num, '(A)', iostat=iostat) line
             if (iostat /= 0) exit
-            call execute_line(line, running)
+            call execute_line(line, quit)
         end do
         close(unit_num)
     end if
 
     ! REPL
-    do while (running)
+    do while (.not. quit)
         read(*, '(A)', iostat=iostat) line
         if (iostat /= 0) exit
-        call execute_line(line, running)
+        call execute_line(line, quit)
     end do
 end program
