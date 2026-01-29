@@ -6,6 +6,12 @@
 - State positions directly without preamble
 - When asked to take a stand, take one
 
+## Code Style
+
+- Always seek elegant, economical solutions
+- Avoid boilerplate; leverage libraries and existing utilities
+- If something feels verbose, there's probably a better way
+
 ## Building and Running
 
 To run an example program:

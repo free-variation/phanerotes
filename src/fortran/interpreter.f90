@@ -1,5 +1,7 @@
 module interpreter
     use :: command
+    use :: video
+
     implicit none
 
     type :: word_definition
@@ -202,6 +204,7 @@ module interpreter
                 b = pop_number()
                 call push_number(pop_number() / b)
 
+            ! control words 
             case ("repeat")
                 repeats = int(pop_number())
             case ("0?")
@@ -214,6 +217,7 @@ module interpreter
                 compiling = 1
                 num_words = num_words + 1
 
+            ! image manipulation words
             case ("load")
                 call load()
             case ("save")
@@ -236,6 +240,17 @@ module interpreter
                 call interpolate()
             case ("interpolate-frames")
                 call interpolate_frames()
+
+            ! video generation words
+            case ("clear_video")
+                call clear_video()
+            case ("prepare_tiles")
+                call prepare_tiles()
+            case ("analyze_audio")
+                call analyze_audio()
+            case ("establish_themes")
+                call establish_themes()
+
             case default
                 print *, "unknown word: ", trim(token)
             end select

@@ -87,6 +87,8 @@ module command
         end function
 
         ! ---------- Stack words ----------
+
+        ! dup ( n -- n n )
         subroutine dup_number()
             real :: num
 
@@ -95,13 +97,15 @@ module command
             call push_number(num)
         end subroutine
 
+        ! drop ( n -- )
         subroutine drop_number()
             real :: discard
 
             discard = pop_number()
-        end subroutine 
+        end subroutine
 
-        subroutine swap_number() 
+        ! swap ( n1 n2 -- n2 n1 )
+        subroutine swap_number()
             real :: num1, num2
 
             num1 = pop_number()
@@ -110,6 +114,7 @@ module command
             call push_number(num2)
         end subroutine
 
+        ! over ( n1 n2 -- n1 n2 n1 )
         subroutine over_number()
             real :: num1, num2
 
@@ -120,29 +125,33 @@ module command
             call push_number(num2)
         end subroutine
 
+        ! idup ( img -- img img )
         subroutine dup_image()
-            real, allocatable :: pixels(:, :, :) 
-            
+            real, allocatable :: pixels(:, :, :)
+
             pixels = pop_image()
             call push_image(pixels)
             call push_image(pixels)
         end subroutine
 
+        ! idrop ( img -- )
         subroutine drop_image()
             real, allocatable :: discard(:,:,:)
 
             discard = pop_image()
         end subroutine
 
-        subroutine swap_image() 
+        ! iswap ( img1 img2 -- img2 img1 )
+        subroutine swap_image()
             real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
 
             pixels1 = pop_image()
             pixels2 = pop_image()
             call push_image(pixels1)
             call push_image(pixels2)
-        end subroutine 
+        end subroutine
 
+        ! iover ( img1 img2 -- img1 img2 img1 )
         subroutine over_image()
             real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
 
@@ -153,6 +162,7 @@ module command
             call push_image(pixels2)
         end subroutine
 
+        ! . ( n -- )
         subroutine dot()
             real :: number
 
@@ -160,14 +170,17 @@ module command
             write(*, '(G0, A)', advance='no') number, ' '
         end subroutine
 
+        ! s. ( s -- )
         subroutine sdot()
             character(MAX_STRING_LENGTH) :: s
 
             s = pop_string()
             write(*, '(A, A)', advance='no') trim(s), ' '
         end subroutine
-        
+
         ! ---------- Utility words ----------
+
+        ! list-files ( s:dir -- s... n:count )
         subroutine list_files()
             character(MAX_STRING_LENGTH) :: dir
             character(MAX_STRING_LENGTH), allocatable :: filenames(:)
@@ -185,7 +198,9 @@ module command
 
 
         ! ---------- Image manipulation words ----------
-        subroutine load() 
+
+        ! load ( s:filename -- img )
+        subroutine load()
             character(MAX_STRING_LENGTH) :: filename
             real, allocatable :: pixels(:,:,:)
 
@@ -194,18 +209,20 @@ module command
             call push_image(pixels)
         end subroutine
 
-        subroutine save() 
+        ! save ( s:filename img -- )
+        subroutine save()
             character(MAX_STRING_LENGTH) :: filename
             real, allocatable :: pixels(:,:,:)
             logical :: success
 
             filename = pop_string()
             pixels = pop_image()
-            
+
             call save_image(filename, pixels, success)
             if (.not. success) error stop "failed to save image"
         end subroutine
 
+        ! transpose ( img -- img )
         subroutine transpose()
             real, allocatable :: pixels(:,:,:), transposed_image(:,:,:)
 
@@ -214,6 +231,7 @@ module command
             call push_image(transposed_image)
         end subroutine
 
+        ! fliph ( img -- img )
         subroutine fliph()
             real, allocatable :: pixels(:,:,:), flipped_image(:,:,:)
 
@@ -222,6 +240,7 @@ module command
             call push_image(flipped_image)
         end subroutine
 
+        ! flipv ( img -- img )
         subroutine flipv()
             real, allocatable :: pixels(:,:,:), flipped_image(:,:,:)
 
@@ -230,6 +249,7 @@ module command
             call push_image(flipped_image)
         end subroutine
 
+        ! transform ( img n:cx n:cy n:angle n:sx n:sy n:tx n:ty -- img )
         subroutine transform()
             real, allocatable :: pixels(:,:,:), transformed_pixels(:,:,:)
             real :: cx, cy
@@ -257,6 +277,7 @@ module command
             call push_image(transformed_pixels)
         end subroutine
 
+        ! split ( img -- img... n:channels )
         subroutine split()
             real, allocatable :: pixels(:,:,:)
             integer :: num_channels
@@ -280,6 +301,7 @@ module command
 
         end subroutine
 
+        ! merge ( img... n:channels -- img )
         subroutine merge()
             integer :: num_channels
             real, allocatable :: pixels(:,:,:)
@@ -317,6 +339,7 @@ module command
             call push_image(pixels)
         end subroutine
 
+        ! fill ( n:r [n:g n:b [n:a]] img -- img )
         subroutine fill()
             real, allocatable :: pixels(:,:,:)
             integer :: num_channels
@@ -326,7 +349,7 @@ module command
 
             if (num_channels == 4) then
                 pixels(4, :, :) = pop_number()
-            end if 
+            end if
 
             if (num_channels >= 3) then
                 pixels(3, :, :) = pop_number()
@@ -338,6 +361,7 @@ module command
             call push_image(pixels)
         end subroutine
 
+        ! interpolate ( img1 img2 n:alpha -- img )
         subroutine interpolate()
             real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
             real, allocatable :: interpolated_pixels(:,:,:)
@@ -352,6 +376,7 @@ module command
             call push_image(interpolated_pixels)
         end subroutine
 
+        ! interpolate-frames ( img1 img2 n:frames -- img... )
         subroutine interpolate_frames()
             real, allocatable :: pixels1(:,:,:), pixels2(:,:,:)
             real, allocatable :: interpolated_pixels(:,:,:)

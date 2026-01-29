@@ -70,10 +70,30 @@ module utilities
             run_command = split_string(trim(p%stdout), nl)
         end function
 
-        function directory_files(dir)
+        function directory_files(dir, glob)
             character(*), intent(in) :: dir
+            character(*), intent(in), optional :: glob
             character(256), allocatable :: directory_files(:)
 
-            directory_files = run_command("ls " // trim(dir))
+            character(256), allocatable :: raw(:)
+            integer :: i, slash_pos
+
+            if (present(glob)) then
+                ! find with -iname for case-insensitive glob, returns full paths
+                raw = run_command("find " // trim(dir) // " -maxdepth 1 -iname '" // trim(glob) // "' -type f")
+
+                ! strip directory prefix to get just filenames
+                allocate(directory_files(size(raw)))
+                do i = 1, size(raw)
+                    slash_pos = index(raw(i), '/', back=.true.)
+                    if (slash_pos > 0) then
+                        directory_files(i) = raw(i)(slash_pos+1:)
+                    else
+                        directory_files(i) = raw(i)
+                    end if
+                end do
+            else
+                directory_files = run_command("ls " // trim(dir))
+            end if
         end function
 end module

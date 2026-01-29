@@ -14,6 +14,7 @@ contains
         testsuite = [ &
             new_unittest("directory_files_returns_files", test_directory_files_returns_files), &
             new_unittest("directory_files_count", test_directory_files_count), &
+            new_unittest("directory_files_glob", test_directory_files_glob), &
             new_unittest("split_basic", test_split_basic), &
             new_unittest("split_newline", test_split_newline), &
             new_unittest("split_empty", test_split_empty) &
@@ -47,6 +48,24 @@ contains
         end do
 
         call check(error, found_main, "should find main.f90 in test directory")
+    end subroutine
+
+
+    subroutine test_directory_files_glob(error)
+        type(error_type), allocatable, intent(out) :: error
+        character(256), allocatable :: files(:)
+        logical :: found_f90
+        integer :: i
+
+        ! Test case-insensitive glob - *.F90 should match .f90 files
+        files = directory_files("test", "*.F90")
+
+        found_f90 = .false.
+        do i = 1, size(files)
+            if (index(files(i), ".f90") > 0) found_f90 = .true.
+        end do
+
+        call check(error, found_f90, "glob *.F90 should match .f90 files (case-insensitive)")
     end subroutine
 
 

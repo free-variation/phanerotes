@@ -11,8 +11,9 @@ fi
 
 AUDIO="$1"
 FPS="$2"
+AUDIO_DIR=$(dirname "$AUDIO")
 BASENAME=$(basename "$AUDIO" | sed 's/\.[^.]*$//')
-OUTPUT="${3:-${BASENAME}_features.tsv}"
+OUTPUT="${3:-${AUDIO_DIR}/${BASENAME}_features.tsv}"
 
 # Get sample rate
 SAMPLE_RATE=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=noprint_wrappers=1:nokey=1 "$AUDIO")
@@ -93,3 +94,4 @@ END {
 rm -rf "$TMPDIR"
 
 echo "Wrote $(tail -n +2 "$OUTPUT" | wc -l | tr -d ' ') frames to $OUTPUT" >&2
+echo "$OUTPUT"
