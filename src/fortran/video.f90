@@ -167,6 +167,7 @@ contains
         flux_norm = (flux_mono - minval(flux_mono)) / (maxval(flux_mono) - minval(flux_mono))
         rms_mono = (audio_features(:, 13) + audio_features(:, 14)) / 2
         rms_norm = (rms_mono - minval(rms_mono)) / (maxval(rms_mono) - minval(rms_mono))
+
         if (allocated(energy)) deallocate(energy)
         allocate(energy(num_audio_frames))
         energy(1) = (flux_norm(1) + rms_norm(1)) / 2
@@ -270,11 +271,13 @@ contains
 
         theme_weight = pop_number()
 
+        ! find the current theme section
         theme_section = 1
         do i = 1, size(theme_audio_boundaries)
             if (current_frame >= theme_audio_boundaries(i)) theme_section = theme_section + 1
         end do
 
+        ! get the best match for next tile from the current one
         min_hits = minval(tile_hits)
         pool = pack([(i, i = 1, size(tile_hits))], tile_hits == min_hits)
 
@@ -295,6 +298,8 @@ contains
         current_frame = current_frame + num_frames
         tile_hits(end_tile) = tile_hits(end_tile) + 1
         current_tile = end_tile
+
+        call push_number(int(current_frame))
 
     end subroutine
 
