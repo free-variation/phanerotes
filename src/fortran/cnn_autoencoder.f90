@@ -240,18 +240,24 @@ module cnn_autoencoder
            output = sigmoid_forward(output)
        end subroutine
 
-       subroutine encoder_forward(net, input, latent)
+       subroutine encoder_forward(net, input, latent, encoder_activations)
            type(autoencoder), intent(inout) :: net
            real, intent(in) :: input(:,:,:,:)
            real, allocatable, intent(out) :: latent(:,:,:,:)
+           type(tensor_cache), allocatable, intent(out) :: encoder_activations(:)
 
            real, allocatable :: layer_input(:,:,:,:), layer_output(:,:,:,:)
            integer :: i
 
+           allocate(encoder_activations(net%config%num_layers - 1))
+           
            layer_input = input
            do i = 1, net%config%num_layers
                call conv_forward(net%encoder(i), layer_input, layer_output)
+               
                layer_output = relu_forward(layer_output)
+               if (i < net%config%num_layers) encoder_activations(i)%tensor = layer_output
+               
                layer_input = layer_output
            end do
 

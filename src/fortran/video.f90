@@ -1,17 +1,20 @@
 module video
-    use image
-    use cnn_autoencoder
-    use command
-    use utilities
+    use :: image
+    use :: cnn_autoencoder
+    use :: command
+    use :: utilities
 
     implicit none
 
     real, parameter :: SMOOTHING_ALPHA = 0.25
 
+    character(MAX_STRING_LENGTH) :: project_dir
+
     type(autoencoder) :: net
     type(image_entry), allocatable :: images(:)
     real, allocatable :: tiles(:,:,:,:), latent_tiles(:,:,:,:)
     real, allocatable :: cosines(:,:)
+    type(tensor_cache), allocatable :: encoder_activations(:,:)
 
     ! Audio: (num_frames x 14 features)
     real, allocatable :: audio_features(:,:)
@@ -33,14 +36,16 @@ contains
         if (allocated(tiles)) deallocate(tiles)
         if (allocated(latent_tiles)) deallocate(latent_tiles)
         if (allocated(cosines)) deallocate(cosines)
+        if (allocated(encoder_activations)) deallocate(encoder_activations)
         if (allocated(theme_audio_boundaries)) deallocate(theme_audio_boundaries)
         if (allocated(theme_tiles)) deallocate(theme_tiles)
         if (allocated(tile_hits)) deallocate(tile_hits)
         if (allocated(energy)) deallocate(energy)
 
+        project_dir = ""
         current_tile = 0
         current_frame = 1
-        fps = 0
+        fps = 0.0
         bpm = 0
         num_audio_frames = 0
         audio_time = 0.0
@@ -56,9 +61,8 @@ contains
         call set_training(net, .false.)
     end subroutine
 
-    ! prepare_tiles ( s:project-dir n:tile-width n:tile-height n:batch-size -- )
+    ! prepare-tiles ( n:batch-size n:tile-height n:tile-width s:project-dir -- )
     subroutine prepare_tiles()
-        character(MAX_STRING_LENGTH) :: project_dir
         character(MAX_STRING_LENGTH), allocatable :: image_filenames(:)
         integer :: i, j, k
         integer :: tile_width, tile_height
@@ -69,6 +73,8 @@ contains
         integer :: latent_channels, latent_width, latent_height
         integer :: flat_rows
         real, allocatable :: flat_latent(:,:)
+        type(tensor_cache), allocatable :: activations(:)
+        integer :: layer
 
         project_dir = pop_string()
         tile_width = int(pop_number())
@@ -108,7 +114,7 @@ contains
         end do
 
         ! run one tile through the encoder to obtain the latent dimensions
-        call encoder_forward(net, tiles(:,:,:,1:1), latent)
+        call encoder_forward(net, tiles(:,:,:,1:1), latent, activations)
         latent_channels = size(latent, 1)
         latent_height = size(latent, 2)
         latent_width = size(latent,3)
@@ -116,11 +122,19 @@ contains
 
         ! compute the latent tensors for all the tiles
         allocate(latent_tiles(latent_channels, latent_height, latent_width, total_tiles))
+        allocate(encoder_activations(total_tiles, net%config%num_layers - 1))
         batch_size = int(pop_number())
         do i = 1, total_tiles, batch_size
             j = min(i + batch_size - 1, total_tiles)
-            call encoder_forward(net, tiles(:,:,:,i:j), latent)
+            call encoder_forward(net, tiles(:,:,:,i:j), latent, activations)
             latent_tiles(:,:,:,i:j) = latent
+
+            ! split batch activations into per-tile storage
+            do k = i, j
+                do layer = 1, size(activations)
+                    encoder_activations(k, layer)%tensor = activations(layer)%tensor(:,:,:,k-i+1:k-i+1)
+                end do
+            end do
         end do
 
         ! compute cosine similarity between latent tiles
@@ -133,12 +147,14 @@ contains
         allocate(cosines(total_tiles, total_tiles))
         call sgemm('T', 'N', total_tiles, total_tiles, flat_rows, 1.0, &
             flat_latent, flat_rows, flat_latent, flat_rows, 0.0, cosines, total_tiles)
-        print '(A,I0,A,I0)', "cosines: ", total_tiles, "x", total_tiles  
+        print '(A,I0,A,I0)', "cosines: ", total_tiles, "x", total_tiles
 
+        ! create frames output directory
+        call execute_command_line("mkdir -p " // trim(project_dir) // "/frames")
     end subroutine
 
 
-    ! analyze-audio ( s:audio-file n:fps -- )
+    ! analyze-audio ( n:bpm n:fps s:audio-file -- )
     subroutine analyze_audio()
         use stdlib_io, only: loadtxt
         character(MAX_STRING_LENGTH) :: audio_filename, tsv_filename, command
@@ -148,6 +164,7 @@ contains
 
         audio_filename = pop_string()
         fps = pop_number()
+        bpm = int(pop_number())
 
         write(command, '(A,A,A,I0)') "scripts/audio_features.sh ", trim(audio_filename), " ", int(fps)
         output = run_command(command)
@@ -184,6 +201,7 @@ contains
         random_latent = 1 + int(r * size(latent_tiles, 4))
     end function
 
+    ! establish-themes ( n:num-themes -- )
     subroutine establish_themes()
         integer :: num_themes
         integer :: frame_idx, i, i1, i2
@@ -250,14 +268,17 @@ contains
 
     end subroutine
 
+    ! generate-transition ( n:theme-weight n:clock-division -- [img s:filename]... n:current-frame n:num-frames )
     subroutine generate_transition()
         integer :: start_tile, end_tile, candidate
         integer :: num_frames, theme_section
         real :: clock_division, theme_weight
         integer :: i
-        real :: score, best_score
+        real :: score, best_score, alpha
         integer, allocatable :: pool(:)
         integer :: min_hits
+        real, allocatable :: output(:,:,:,:)
+        character(MAX_STRING_LENGTH) :: filename
 
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
@@ -295,12 +316,46 @@ contains
             end if
         end do
 
+        ! generate the images
+        do i = num_frames, 1, -1
+            alpha = real(num_frames - i) / real(num_frames - 1)
+            call decode_latent_interpolated(net,&
+                latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile),&
+                encoder_activations(start_tile, :), encoder_activations(end_tile, :),&
+                alpha, output)
+            call push_image(output(:,:,:,1))
+            write(filename, '(A,A,I0.5,A)') trim(project_dir), "/frames/frame_", current_frame + i - 1, ".bmp"
+            call push_string(filename)
+        end do
+
         current_frame = current_frame + num_frames
         tile_hits(end_tile) = tile_hits(end_tile) + 1
         current_tile = end_tile
 
-        call push_number(int(current_frame))
+        call push_number(real(current_frame))
+        call push_number(real(num_frames))
 
+    end subroutine
+
+    ! finalize-video ( s:output-file s:audio-file -- )
+    subroutine finalize_video()
+        character(MAX_STRING_LENGTH) :: audio_file, output_file, command
+        character(512) :: frame_pattern
+
+        audio_file = pop_string()
+        output_file = pop_string()
+
+        write(frame_pattern, '(A,A)') trim(project_dir), "/frames/frame_%05d.bmp"
+
+        write(command, '(A,I0,A,A,A,A,A,A)') &
+            "ffmpeg -y -framerate ", int(fps), &
+            " -i '", trim(frame_pattern), &
+            "' -i '", trim(audio_file), &
+            "' -vf 'nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0'" // &
+            " -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest '", &
+            trim(output_file), "'"
+
+        call execute_command_line(command)
     end subroutine
 
 

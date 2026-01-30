@@ -242,14 +242,20 @@ module interpreter
                 call interpolate_frames()
 
             ! video generation words
-            case ("clear_video")
+            case ("clear-video")
                 call clear_video()
-            case ("prepare_tiles")
+            case ("prepare-tiles")
                 call prepare_tiles()
-            case ("analyze_audio")
+            case ("analyze-audio")
                 call analyze_audio()
-            case ("establish_themes")
+            case ("establish-themes")
                 call establish_themes()
+            case ("generate-transition")
+                call generate_transition()
+            case ("finalize-video")
+                call finalize_video()
+            case ("get-total-frames")
+                call push_number(int(num_audio_frames))
 
             case default
                 print *, "unknown word: ", trim(token)
