@@ -328,7 +328,7 @@ contains
         ! decode frames in parallel
         !$omp parallel do private(i, alpha, output) schedule(dynamic)
         do i = 1, num_frames
-            alpha = real(num_frames - i) / real(num_frames - 1)
+            alpha = real(num_frames - i) / real(max(num_frames - 1, 1))
             call decode_latent_interpolated(net,&
                 latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile),&
                 encoder_activations(start_tile, :), encoder_activations(end_tile, :),&
@@ -353,22 +353,36 @@ contains
 
     end subroutine
 
-    ! finalize-video ( s:output-file s:audio-file -- )
+    ! finalize-video ( n:fade-in n:fade-out s:fade-in-color s:fade-out-color s:output-file s:audio-file -- )
     subroutine finalize_video()
         character(MAX_STRING_LENGTH) :: audio_file, output_file, command
-        character(512) :: frame_pattern
+        character(MAX_STRING_LENGTH) :: fade_in_color, fade_out_color
+        character(512) :: frame_pattern, filter_chain
+        real :: fade_in, fade_out, fade_out_start
 
         audio_file = pop_string()
         output_file = pop_string()
+        fade_out_color = pop_string()
+        fade_in_color = pop_string()
+        fade_out = pop_number()
+        fade_in = pop_number()
+
+        fade_out_start = audio_time - fade_out
 
         write(frame_pattern, '(A,A)') trim(project_dir), "/frames/frame_%05d.bmp"
 
-        write(command, '(A,I0,A,A,A,A,A,A)') &
+        write(filter_chain, '(A,F0.2,A,A,A,F0.2,A,F0.2,A,A)') &
+            "nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0,fade=t=in:st=0:d=", fade_in, &
+            ":c=", trim(fade_in_color), &
+            ",fade=t=out:st=", fade_out_start, ":d=", fade_out, &
+            ":c=", trim(fade_out_color)
+
+        write(command, '(A,I0,A,A,A,A,A,A,A,A,A)') &
             "ffmpeg -nostdin -y -framerate ", int(fps), &
             " -i '", trim(frame_pattern), &
             "' -i '", trim(audio_file), &
-            "' -vf 'nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0'" // &
-            " -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest '", &
+            "' -vf '", trim(filter_chain), &
+            "' -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest '", &
             trim(output_file), "'"
 
         call execute_command_line(command)
