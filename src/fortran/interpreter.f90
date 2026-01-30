@@ -209,6 +209,9 @@ module interpreter
                 repeats = int(pop_number())
             case ("0?")
                 if (peek_number() == 0) done = .true.
+            case (">=?")
+                b = pop_number()
+                if (pop_number() >= b) done = .true.
             case ("empty-string-stack?")
                 if (string_stack_top == 0) done = .true.
             case ("empty-image-stack?")
@@ -242,6 +245,8 @@ module interpreter
                 call interpolate_frames()
 
             ! video generation words
+            case ("load-model")
+                call load_model()
             case ("clear-video")
                 call clear_video()
             case ("prepare-tiles")
@@ -255,7 +260,7 @@ module interpreter
             case ("finalize-video")
                 call finalize_video()
             case ("get-total-frames")
-                call push_number(int(num_audio_frames))
+                call push_number(real(num_audio_frames))
 
             case default
                 print *, "unknown word: ", trim(token)

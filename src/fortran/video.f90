@@ -3,6 +3,7 @@ module video
     use :: cnn_autoencoder
     use :: command
     use :: utilities
+    use :: omp_lib
 
     implicit none
 
@@ -264,7 +265,7 @@ contains
             theme_tiles(i) = best_tile
         end do
 
-        print '(A,I0,A,I0)', "themes: ", num_themes, " tiles, ", num_themes - 1, " boundaries"
+        print '(A,I0,A,I0,A)', "themes: ", num_themes, " tiles, ", num_themes - 1, " boundaries"
 
     end subroutine
 
@@ -278,7 +279,9 @@ contains
         integer, allocatable :: pool(:)
         integer :: min_hits
         real, allocatable :: output(:,:,:,:)
+        real, allocatable :: frames(:,:,:,:)
         character(MAX_STRING_LENGTH) :: filename
+        integer :: channels, height, width
 
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
@@ -286,9 +289,9 @@ contains
         if (current_tile == 0) then
             start_tile = random_latent()
             tile_hits(start_tile) = tile_hits(start_tile) + 1
-        else 
+        else
             start_tile = current_tile
-        end if 
+        end if
 
         theme_weight = pop_number()
 
@@ -316,14 +319,27 @@ contains
             end if
         end do
 
-        ! generate the images
-        do i = num_frames, 1, -1
+        ! allocate frame buffer
+        channels = size(tiles, 1)
+        height = size(tiles, 2)
+        width = size(tiles, 3)
+        allocate(frames(channels, height, width, num_frames))
+
+        ! decode frames in parallel
+        !$omp parallel do private(i, alpha, output) schedule(dynamic)
+        do i = 1, num_frames
             alpha = real(num_frames - i) / real(num_frames - 1)
             call decode_latent_interpolated(net,&
                 latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile),&
                 encoder_activations(start_tile, :), encoder_activations(end_tile, :),&
                 alpha, output)
-            call push_image(output(:,:,:,1))
+            frames(:,:,:,i) = output(:,:,:,1)
+        end do
+        !$omp end parallel do
+
+        ! push frames and filenames to stacks (reverse order so first frame ends on top)
+        do i = num_frames, 1, -1
+            call push_image(frames(:,:,:,i))
             write(filename, '(A,A,I0.5,A)') trim(project_dir), "/frames/frame_", current_frame + i - 1, ".bmp"
             call push_string(filename)
         end do
@@ -348,7 +364,7 @@ contains
         write(frame_pattern, '(A,A)') trim(project_dir), "/frames/frame_%05d.bmp"
 
         write(command, '(A,I0,A,A,A,A,A,A)') &
-            "ffmpeg -y -framerate ", int(fps), &
+            "ffmpeg -nostdin -y -framerate ", int(fps), &
             " -i '", trim(frame_pattern), &
             "' -i '", trim(audio_file), &
             "' -vf 'nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0'" // &
