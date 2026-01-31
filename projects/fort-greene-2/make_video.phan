@@ -1,4 +1,5 @@
-clear_video
+clear-video
+
 "models/ae-weights-576x384-add.bin" load-model
 4 768 1152 "projects/fort-greene-2" prepare-tiles
 96 24 "projects/fort-greene-2/fort-greene-2.mp3" analyze-audio
@@ -6,6 +7,7 @@ clear_video
 
 : flush-frames
     0?
+    sdup s. cr
     save
     1 - flush-frames ;
 

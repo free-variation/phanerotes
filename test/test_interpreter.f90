@@ -425,7 +425,7 @@ contains
 
         quit = .false.
         ! Load an image first, then empty-image-stack? should NOT stop
-        call execute_line('"images/test_input_1.png" load empty-image-stack? 99', quit)
+        call execute_line('"images/test1.jpg" load empty-image-stack? 99', quit)
 
         result = pop_number()
         discard = pop_image()

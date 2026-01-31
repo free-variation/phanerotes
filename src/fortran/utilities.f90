@@ -79,8 +79,7 @@ module utilities
             integer :: i, slash_pos
 
             if (present(glob)) then
-                ! find with -iname for case-insensitive glob, returns full paths, sorted
-                raw = run_command("find " // trim(dir) // " -maxdepth 1 -iname '" // trim(glob) // "' -type f | sort")
+                raw = run_command("sh -c ""find " // trim(dir) // " -maxdepth 1 -iname '" // trim(glob) // "' -type f | sort""")
 
                 ! strip directory prefix to get just filenames
                 allocate(directory_files(size(raw)))
