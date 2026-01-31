@@ -1,10 +1,9 @@
 clear-video
 
 "models/ae-weights-576x384-add.bin" load-model
-#4 768 1152 "projects/fort-greene-2" prepare-tiles
-6 384 576 "projects/fort-greene-2" prepare-tiles
+4 768 1152 "projects/fort-greene-2" prepare-tiles
 96 24 "projects/fort-greene-2/fort-greene-2.mp3" analyze-audio
-4 establish-themes
+6 establish-themes
 
 # effects (disabled)
 0 0 0 0 0 set-camera-motion
