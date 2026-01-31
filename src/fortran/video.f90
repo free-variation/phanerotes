@@ -228,6 +228,9 @@ contains
         do i = 2, num_audio_frames
             energy(i) = SMOOTHING_ALPHA * (flux_norm(i) + rms_norm(i)) / 2 + (1 - SMOOTHING_ALPHA) * energy(i - 1)
         end do
+
+        ! re-normalize after smoothing to restore full 0-1 range
+        energy = (energy - minval(energy)) / (maxval(energy) - minval(energy))
     end subroutine
 
     function random_latent() 
@@ -318,6 +321,7 @@ contains
         real, allocatable :: frames(:,:,:,:)
         character(MAX_STRING_LENGTH) :: filename
         integer :: channels, height, width
+        real :: theme_affinity, continuity, best_theme_affinity, best_continuity
 
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
@@ -325,6 +329,7 @@ contains
         if (current_tile == 0) then
             start_tile = random_latent()
             tile_hits(start_tile) = tile_hits(start_tile) + 1
+            print '(A,I0)', "  initial tile: ", start_tile
         else
             start_tile = current_tile
         end if
@@ -346,14 +351,27 @@ contains
             candidate = pool(i)
             if (candidate == start_tile) cycle
 
-            score = theme_weight * cosines(candidate, theme_tiles(theme_section)) +&
-                (1.0 - theme_weight) * cosines(start_tile, candidate)
+            theme_affinity = cosines(candidate, theme_tiles(theme_section))
+            continuity = cosines(start_tile, candidate)
+            score = theme_weight * theme_affinity + (1.0 - theme_weight) * continuity
 
             if (score > best_score) then
                 best_score = score
                 end_tile = candidate
+                best_theme_affinity = theme_affinity
+                best_continuity = continuity
             end if
         end do
+
+        print '(A,I0,A,I0,A,F5.2,A,I0,A)', &
+            "transition ", current_frame, "-", current_frame + num_frames - 1, &
+            " (", clock_division, "x, ", num_frames, " frames)"
+        print '(A,I0,A,I0,A,I0,A,I0,A)', &
+            "  tile ", start_tile, " -> ", end_tile, &
+            " (theme ", theme_section, ", pool ", size(pool), ")"
+        print '(A,F6.3,A,F4.2,A,F6.3,A,F4.2,A,F6.3,A)', &
+            "  score=", best_score, " [theme(", theme_weight, ")=", best_theme_affinity, &
+            " + cont(", 1.0 - theme_weight, ")=", best_continuity, "]"
 
         ! allocate frame buffer
         channels = size(tiles, 1)

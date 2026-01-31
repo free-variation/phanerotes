@@ -265,6 +265,7 @@ contains
 
         call push_number(0.3)   ! probability
         call push_number(8.0)   ! max_offset
+        call push_number(0.0)   ! period (disabled)
         call set_chroma()
 
         call check(error, abs(chroma_probability - 0.3) < 1e-5, "probability should be 0.3")
@@ -280,6 +281,7 @@ contains
         ! set probability to 1.0 - should always activate
         call push_number(1.0)
         call push_number(5.0)
+        call push_number(0.0)   ! period (disabled)
         call set_chroma()
 
         call roll_chroma()
@@ -291,6 +293,7 @@ contains
         ! set probability to 0.0 - should never activate
         call push_number(0.0)
         call push_number(5.0)
+        call push_number(0.0)   ! period (disabled)
         call set_chroma()
 
         call roll_chroma()
@@ -350,6 +353,7 @@ contains
         ! set up chroma with probability 1.0
         call push_number(1.0)
         call push_number(10.0)
+        call push_number(0.0)   ! period (disabled)
         call set_chroma()
         call roll_chroma()
 
