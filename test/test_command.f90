@@ -41,7 +41,8 @@ contains
             new_unittest("cmd_interpolate_alpha_zero", test_cmd_interpolate_alpha_zero), &
             new_unittest("cmd_interpolate_frames_basic", test_cmd_interpolate_frames_basic), &
             new_unittest("cmd_interpolate_frames_single", test_cmd_interpolate_frames_single), &
-            new_unittest("cmd_interpolate_frames_zero", test_cmd_interpolate_frames_zero) &
+            new_unittest("cmd_interpolate_frames_zero", test_cmd_interpolate_frames_zero), &
+            new_unittest("cmd_save_in", test_cmd_save_in) &
         ]
     end subroutine
 
@@ -672,6 +673,43 @@ contains
         result = pop_image()
 
         call check(error, all(abs(result - 0.7) < 1.0e-6), "zero frames should return pixels1")
+    end subroutine
+
+
+    subroutine test_cmd_save_in(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img(:,:,:), loaded(:,:,:)
+        character(MAX_STRING_LENGTH) :: original_path, target_dir
+        logical :: exists
+
+        original_path = "/some/path/to/frame_00042.bmp"
+        target_dir = "test/fixtures/save_in_test"
+
+        ! create target directory
+        call execute_command_line("mkdir -p " // trim(target_dir))
+
+        ! create test image
+        allocate(img(3, 10, 10))
+        img = 0.42
+
+        ! save-in ( s:original-path img s:target-dir -- )
+        call push_string(original_path)
+        call push_image(img)
+        call push_string(target_dir)
+        call save_in()
+
+        ! check file was created with correct basename
+        inquire(file=trim(target_dir) // "/frame_00042.bmp", exist=exists)
+        call check(error, exists, "file should exist in target directory")
+        if (allocated(error)) return
+
+        ! verify content
+        loaded = load_image(trim(target_dir) // "/frame_00042.bmp")
+        call check(error, all(abs(loaded - 0.42) < 0.02), "loaded image should match saved")
+        if (allocated(error)) return
+
+        ! cleanup
+        call execute_command_line("rm -rf " // trim(target_dir))
     end subroutine
 
 end module test_command

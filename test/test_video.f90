@@ -28,7 +28,8 @@ contains
             new_unittest("set_chroma", test_set_chroma), &
             new_unittest("roll_chroma", test_roll_chroma), &
             new_unittest("wobble", test_wobble), &
-            new_unittest("aberrate", test_aberrate) &
+            new_unittest("aberrate", test_aberrate), &
+            new_unittest("load_frames", test_load_frames) &
         ]
     end subroutine
 
@@ -374,6 +375,65 @@ contains
 
         ! green channel should be unchanged
         call check(error, all(abs(result(2,:,:) - 0.5) < 1e-5), "green channel should be unchanged")
+    end subroutine
+
+
+    subroutine test_load_frames(error)
+        type(error_type), allocatable, intent(out) :: error
+        real, allocatable :: img1(:,:,:), img2(:,:,:), img3(:,:,:)
+        character(MAX_STRING_LENGTH) :: fn1, fn2, fn3, test_dir
+        integer :: count
+        logical :: success
+
+        test_dir = "test/fixtures/frames"
+
+        ! create test directory and frames
+        call execute_command_line("mkdir -p " // trim(test_dir))
+
+        ! create 3 small test images with distinct pixel values
+        allocate(img1(3, 10, 10), img2(3, 10, 10), img3(3, 10, 10))
+        img1 = 0.1
+        img2 = 0.5
+        img3 = 0.9
+
+        call save_image(trim(test_dir) // "/frame_00001.bmp", img1, success)
+        call save_image(trim(test_dir) // "/frame_00002.bmp", img2, success)
+        call save_image(trim(test_dir) // "/frame_00003.bmp", img3, success)
+
+        ! load frames
+        call push_string(test_dir)
+        call load_frames()
+
+        count = int(pop_number())
+        call check(error, count == 3, "should load 3 frames")
+        if (allocated(error)) return
+
+        ! first frame should be on top (frame_00001)
+        fn1 = pop_string()
+        img1 = pop_image()
+        call check(error, index(fn1, "frame_00001") > 0, "first filename should be frame_00001")
+        if (allocated(error)) return
+        call check(error, abs(img1(1,1,1) - 0.1) < 0.02, "first frame should have value ~0.1")
+        if (allocated(error)) return
+
+        ! second frame
+        fn2 = pop_string()
+        img2 = pop_image()
+        call check(error, index(fn2, "frame_00002") > 0, "second filename should be frame_00002")
+        if (allocated(error)) return
+        call check(error, abs(img2(1,1,1) - 0.5) < 0.02, "second frame should have value ~0.5")
+        if (allocated(error)) return
+
+        ! third frame
+        fn3 = pop_string()
+        img3 = pop_image()
+        call check(error, index(fn3, "frame_00003") > 0, "third filename should be frame_00003")
+        if (allocated(error)) return
+        call check(error, abs(img3(1,1,1) - 0.9) < 0.02, "third frame should have value ~0.9")
+        if (allocated(error)) return
+
+        ! cleanup
+        call execute_command_line("rm -rf " // trim(test_dir))
     end subroutine
 
 end module test_video

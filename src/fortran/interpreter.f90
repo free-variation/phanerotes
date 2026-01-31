@@ -185,6 +185,8 @@ module interpreter
             case ("cr")
                 print *
             
+            case ("sdup")
+                call dup_string()
             case ("dup")
                 call dup_number()
             case ("drop")
@@ -225,6 +227,8 @@ module interpreter
                 call load()
             case ("save")
                 call save()
+            case ("save-in")
+                call save_in()
             case ("transpose")
                 call transpose()
             case ("fliph")
@@ -273,6 +277,8 @@ module interpreter
                 call wobble()
             case ("aberrate")
                 call aberrate()
+            case ("load-frames")
+                call load_frames()
 
             case default
                 print *, "unknown word: ", trim(token)

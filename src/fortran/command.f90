@@ -4,16 +4,18 @@ module command
 
     implicit none
     
-    integer, parameter :: MAX_STACK = 1000
     integer, parameter :: MAX_STRING_LENGTH = 256
+    integer, parameter :: MAX_IMAGE_STACK = 1024
+    integer, parameter :: MAX_NUMBER_STACK = 1024*1024
+    integer, parameter :: MAX_STRING_STACK = 1024*1024
 
-    type image_entry 
+    type image_entry
         real, allocatable :: pixels(:,:,:)
     end type
-    
-    type(image_entry):: image_stack(MAX_STACK)
-    real :: number_stack(MAX_STACK)
-    character(MAX_STRING_LENGTH) :: string_stack(MAX_STACK)
+
+    type(image_entry):: image_stack(MAX_IMAGE_STACK)
+    real :: number_stack(MAX_NUMBER_STACK)
+    character(MAX_STRING_LENGTH) :: string_stack(MAX_STRING_STACK)
 
     integer :: image_stack_top = 0
     integer :: number_stack_top = 0
@@ -25,7 +27,7 @@ module command
         subroutine push_string(s)
             character(*), intent(in) :: s
 
-            if (string_stack_top >= MAX_STACK) error stop "string stack overflow"
+            if (string_stack_top >= MAX_STRING_STACK) error stop "string stack overflow"
 
             string_stack_top = string_stack_top + 1
             string_stack(string_stack_top) = s
@@ -34,7 +36,7 @@ module command
         subroutine push_number(n)
             real, intent(in) :: n
 
-            if (number_stack_top >= MAX_STACK) error stop "number stack overflow"
+            if (number_stack_top >= MAX_NUMBER_STACK) error stop "number stack overflow"
 
             number_stack_top = number_stack_top + 1
             number_stack(number_stack_top) = n
@@ -43,7 +45,7 @@ module command
         subroutine push_image(pixels)
             real, intent(in) :: pixels(:,:,:)
 
-            if (image_stack_top >= MAX_STACK) error stop "image stack overflow"            
+            if (image_stack_top >= MAX_IMAGE_STACK) error stop "image stack overflow"            
 
             image_stack_top = image_stack_top + 1
             image_stack(image_stack_top)%pixels = pixels
@@ -112,6 +114,15 @@ module command
             num2 = pop_number()
             call push_number(num1)
             call push_number(num2)
+        end subroutine
+
+        ! sdup ( s -- s s )
+        subroutine dup_string()
+            character(MAX_STRING_LENGTH) :: s
+
+            s = pop_string()
+            call push_string(s)
+            call push_string(s)
         end subroutine
 
         ! over ( n1 n2 -- n1 n2 n1 )
@@ -190,7 +201,7 @@ module command
             filenames = directory_files(dir)
 
             do i = 1, size(filenames)
-                call push_string(filenames(i))
+                call push_string(trim(dir) // "/" // trim(filenames(i)))
             end do
 
             call push_number(real(size(filenames)))
@@ -219,6 +230,32 @@ module command
             pixels = pop_image()
 
             call save_image(filename, pixels, success)
+            if (.not. success) error stop "failed to save image"
+        end subroutine
+
+        ! save-in ( s:original-path img s:target-dir -- )
+        ! saves image to target-dir using basename from original-path
+        subroutine save_in()
+            character(MAX_STRING_LENGTH) :: target_dir, original_path, basename, new_path
+            real, allocatable :: pixels(:,:,:)
+            logical :: success
+            integer :: i
+
+            target_dir = pop_string()
+            original_path = pop_string()
+            pixels = pop_image()
+
+            ! extract basename (everything after last /)
+            basename = original_path
+            do i = len_trim(original_path), 1, -1
+                if (original_path(i:i) == '/') then
+                    basename = original_path(i+1:)
+                    exit
+                end if
+            end do
+
+            new_path = trim(target_dir) // "/" // trim(basename)
+            call save_image(new_path, pixels, success)
             if (.not. success) error stop "failed to save image"
         end subroutine
 

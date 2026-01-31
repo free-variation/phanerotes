@@ -405,9 +405,35 @@ contains
         end if
     end subroutine
 
-    ! finalize-video ( n:upscale n:fade-in n:fade-out s:fade-in-color s:fade-out-color s:output-file s:audio-file -- )
+    ! load-frames ( s:directory -- [img s:filename]... n:count )
+    ! loads all frame_*.bmp files in sorted order
+    subroutine load_frames()
+        character(MAX_STRING_LENGTH) :: dir
+        character(MAX_STRING_LENGTH), allocatable :: filenames(:)
+        character(MAX_STRING_LENGTH) :: fullpath
+        real, allocatable :: pixels(:,:,:)
+        integer :: i, n
+
+        dir = pop_string()
+        filenames = directory_files(dir, "frame_*.bmp")
+        n = size(filenames)
+
+        ! directory_files returns sorted, so frame_00001 < frame_00002 etc.
+        ! push in reverse order so first frame ends up on top
+        do i = n, 1, -1
+            fullpath = trim(dir) // "/" // trim(filenames(i))
+            pixels = load_image(fullpath)
+            call push_image(pixels)
+            call push_string(fullpath)
+        end do
+
+        call push_number(real(n))
+    end subroutine
+
+    ! finalize-video ( n:upscale n:fade-in n:fade-out s:fade-in-color s:fade-out-color s:frame-dir s:output-file s:audio-file -- )
     subroutine finalize_video()
-        character(MAX_STRING_LENGTH) :: audio_file, output_file, command
+        character(MAX_STRING_LENGTH) :: audio_file, output_file, frame_dir
+        character(1024) :: command
         character(MAX_STRING_LENGTH) :: fade_in_color, fade_out_color
         character(512) :: frame_pattern, filter_chain, scale_filter
         real :: fade_in, fade_out, fade_out_start
@@ -415,6 +441,7 @@ contains
 
         audio_file = pop_string()
         output_file = pop_string()
+        frame_dir = pop_string()
         fade_out_color = pop_string()
         fade_in_color = pop_string()
         fade_out = pop_number()
@@ -423,7 +450,7 @@ contains
 
         fade_out_start = audio_time - fade_out
 
-        write(frame_pattern, '(A,A)') trim(project_dir), "/frames/frame_%05d.bmp"
+        write(frame_pattern, '(A,A)') trim(frame_dir), "/frame_%05d.bmp"
 
         if (upscale > 1) then
             write(scale_filter, '(A,I0,A,I0,A)') "scale=iw*", upscale, ":ih*", upscale, ":flags=lanczos,"
