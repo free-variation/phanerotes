@@ -1,5 +1,6 @@
 : ls list-files repeat s. cr ;
-: dup over over ;
+: 2dup over over ;
 : i2dup iover iover ;
+: effect-frame over over - ;
 
 

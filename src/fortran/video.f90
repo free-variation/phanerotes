@@ -20,16 +20,27 @@ module video
     ! Audio: (num_frames x 14 features)
     real, allocatable :: audio_features(:,:)
     real, allocatable :: energy(:)  ! normalized flux+rms for clock modulation
-    integer :: num_audio_frames
-    real :: audio_time
+    integer :: num_audio_frames = 0
+    real :: audio_time = 0.0
 
     ! video generation globals
-    real :: fps
+    real :: fps = 0.0
     integer, allocatable :: theme_audio_boundaries(:)
     integer, allocatable :: theme_tiles(:)
-    integer :: bpm
-    integer :: current_tile, current_frame
+    integer :: bpm = 0
+    integer :: current_tile = 0, current_frame = 1
     integer, allocatable :: tile_hits(:)
+
+    ! camera motion parameters (sinsoidal)
+    real :: camera_pan_x = 0.0, camera_pan_y = 0.0
+    real :: camera_rotation = 0.0, camera_zoom = 0.0
+    real :: camera_frequency = 1.0
+
+    ! chromatic aberration parameters
+    real :: chroma_probability = 0.0
+    real :: chroma_max_offset = 0.0
+    logical :: chroma_active = .false.
+    real :: chroma_angle = 0.0
 
 contains
     subroutine clear_video()
@@ -50,6 +61,17 @@ contains
         bpm = 0
         num_audio_frames = 0
         audio_time = 0.0
+
+        camera_pan_x = 0.0
+        camera_pan_y = 0.0
+        camera_rotation = 0.0
+        camera_zoom = 0.0
+        camera_frequency = 1.0
+
+        chroma_probability = 0.0
+        chroma_max_offset = 0.0
+        chroma_active = .false.
+        chroma_angle = 0.0
     end subroutine
 
     ! load-model ( s:filename -- )
@@ -353,12 +375,43 @@ contains
 
     end subroutine
 
-    ! finalize-video ( n:fade-in n:fade-out s:fade-in-color s:fade-out-color s:output-file s:audio-file -- )
+    ! set-camera-motion ( n:pan-x n:pan-y n:rotation n:zoom n:frequency -- )
+    subroutine set_camera_motion()
+        camera_frequency = pop_number()
+        camera_zoom = pop_number()
+        camera_rotation = pop_number()
+        camera_pan_y = pop_number()
+        camera_pan_x = pop_number()
+    end subroutine
+
+    ! set-chroma ( n:probability n:max-offset -- )
+    subroutine set_chroma()
+        chroma_max_offset = pop_number()
+        chroma_probability = pop_number()
+    end subroutine
+
+    ! roll-chroma ( -- )
+    ! rolls dice for this transition, sets chroma_active and chroma_angle
+    subroutine roll_chroma()
+        real :: roll
+
+        call random_number(roll)
+        if (roll < chroma_probability) then
+            chroma_active = .true.
+            call random_number(chroma_angle)
+            chroma_angle = chroma_angle * 2.0 * PI
+        else
+            chroma_active = .false.
+        end if
+    end subroutine
+
+    ! finalize-video ( n:upscale n:fade-in n:fade-out s:fade-in-color s:fade-out-color s:output-file s:audio-file -- )
     subroutine finalize_video()
         character(MAX_STRING_LENGTH) :: audio_file, output_file, command
         character(MAX_STRING_LENGTH) :: fade_in_color, fade_out_color
-        character(512) :: frame_pattern, filter_chain
+        character(512) :: frame_pattern, filter_chain, scale_filter
         real :: fade_in, fade_out, fade_out_start
+        integer :: upscale
 
         audio_file = pop_string()
         output_file = pop_string()
@@ -366,12 +419,20 @@ contains
         fade_in_color = pop_string()
         fade_out = pop_number()
         fade_in = pop_number()
+        upscale = int(pop_number())
 
         fade_out_start = audio_time - fade_out
 
         write(frame_pattern, '(A,A)') trim(project_dir), "/frames/frame_%05d.bmp"
 
-        write(filter_chain, '(A,F0.2,A,A,A,F0.2,A,F0.2,A,A)') &
+        if (upscale > 1) then
+            write(scale_filter, '(A,I0,A,I0,A)') "scale=iw*", upscale, ":ih*", upscale, ":flags=lanczos,"
+        else
+            scale_filter = ""
+        end if
+
+        write(filter_chain, '(A,A,F0.2,A,A,A,F0.2,A,F0.2,A,A)') &
+            trim(scale_filter), &
             "nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0,fade=t=in:st=0:d=", fade_in, &
             ":c=", trim(fade_in_color), &
             ",fade=t=out:st=", fade_out_start, ":d=", fade_out, &
@@ -388,5 +449,73 @@ contains
         call execute_command_line(command)
     end subroutine
 
+    ! wobble ( n:frame img -- img )
+    subroutine wobble()
+        real, allocatable :: pixels(:,:,:)
+        integer :: frame, height, width
+        real :: t, cx, cy, tx, ty, angle, s
+        real :: M(3,3)
+
+        frame = int(pop_number())
+        pixels = pop_image()
+
+        if (camera_pan_x == 0.0 .and. camera_pan_y == 0.0 .and. &
+            camera_rotation == 0.0 .and. camera_zoom == 0.0) then
+            call push_image(pixels)
+            return
+        end if
+
+        height = size(pixels, 2)
+        width = size(pixels, 3)
+
+        t = 2.0 * PI * camera_frequency * real(frame) / real(num_audio_frames)
+        cx = real(width) / 2.0
+        cy = real(height) / 2.0
+
+        tx = camera_pan_x * sin(t)
+        ty = camera_pan_y * cos(t)
+        angle = camera_rotation * sin(t + PI/4.0)
+        s = 1.0 + camera_zoom * sin(t + PI/2.0)
+
+        M = matmul(translation_matrix(tx, ty), &
+            matmul(rotation_matrix(cx, cy, angle), &
+                scale_matrix(cx, cy, s, s)))
+
+        call push_image(affine_transform(pixels, M))
+    end subroutine
+
+    ! aberrate ( n:frame img -- img )
+    subroutine aberrate()
+        real, allocatable :: pixels(:,:,:)
+        real, allocatable :: r_channel(:,:,:), b_channel(:,:,:)
+        integer :: frame
+        real :: e, intensity, dx, dy
+        real :: M_r(3,3), M_b(3,3)
+
+        frame = int(pop_number())
+        pixels = pop_image()
+
+        if (.not. chroma_active) then
+            call push_image(pixels)
+            return
+        end if
+
+        e = energy(min(frame, num_audio_frames))
+        intensity = e * chroma_max_offset
+
+        dx = intensity * cos(chroma_angle)
+        dy = intensity * sin(chroma_angle)
+
+        M_r = translation_matrix(dx, dy)
+        M_b = translation_matrix(-dx, -dy)
+
+        r_channel = affine_transform(pixels(1:1,:,:), M_r)
+        b_channel = affine_transform(pixels(3:3,:,:), M_b)
+
+        pixels(1,:,:) = r_channel(1,:,:)
+        pixels(3,:,:) = b_channel(1,:,:)
+
+        call push_image(pixels)
+    end subroutine
 
 end module

@@ -261,6 +261,18 @@ module interpreter
                 call finalize_video()
             case ("get-total-frames")
                 call push_number(real(num_audio_frames))
+            case ("get-energy")
+                call push_number(energy(min(current_frame, num_audio_frames)))
+            case ("set-camera-motion")
+                call set_camera_motion()
+            case ("set-chroma")
+                call set_chroma()
+            case ("roll-chroma")
+                call roll_chroma()
+            case ("wobble")
+                call wobble()
+            case ("aberrate")
+                call aberrate()
 
             case default
                 print *, "unknown word: ", trim(token)
