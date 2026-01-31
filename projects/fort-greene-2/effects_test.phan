@@ -5,28 +5,27 @@
 96 24 "projects/fort-greene-2/fort-greene-2.mp3" analyze-audio
 
 # set up effects
-10 5 2 0.02 1.0 set-camera-motion
-0.5 8.0 set-chroma
+3 2 0.5 0.005 0.3 set-camera-motion
+0.5 8.0 2.0 set-chroma
 
 # list frame files (sorted, last frame on top of string stack)
 "projects/fort-greene-2/frames" list-files
 
 : process-one
     0?
-    dup .
-    roll-chroma
     sdup load
     dup wobble
     dup aberrate
+    sdup s. cr
     "projects/fort-greene-2/frames-effects" save-in
     1 - process-one ;
 
-#process-one
-#drop
+process-one
+drop
 
 # finalize
 1 2.0 5.0 "black" "white"
     "projects/fort-greene-2/frames-effects"
     "projects/fort-greene-2/fort-greene-2-effects-test.mp4"
     "projects/fort-greene-2/fort-greene-2.mp3"
-    finalize-video
+    preview-video

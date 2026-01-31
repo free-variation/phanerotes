@@ -39,6 +39,7 @@ module video
     ! chromatic aberration parameters
     real :: chroma_probability = 0.0
     real :: chroma_max_offset = 0.0
+    real :: chroma_period = 0.0
     logical :: chroma_active = .false.
     real :: chroma_angle = 0.0
 
@@ -70,8 +71,21 @@ contains
 
         chroma_probability = 0.0
         chroma_max_offset = 0.0
+        chroma_period = 0.0
         chroma_active = .false.
         chroma_angle = 0.0
+    end subroutine
+
+    ! set-seed ( n:seed -- )
+    subroutine set_seed()
+        integer :: seed_value, seed_size
+        integer, allocatable :: seed_array(:)
+
+        seed_value = int(pop_number())
+        call random_seed(size=seed_size)
+        allocate(seed_array(seed_size))
+        seed_array = seed_value
+        call random_seed(put=seed_array)
     end subroutine
 
     ! load-model ( s:filename -- )
@@ -384,8 +398,9 @@ contains
         camera_pan_x = pop_number()
     end subroutine
 
-    ! set-chroma ( n:probability n:max-offset -- )
+    ! set-chroma ( n:probability n:max-offset n:period-seconds -- )
     subroutine set_chroma()
+        chroma_period = pop_number() * fps
         chroma_max_offset = pop_number()
         chroma_probability = pop_number()
     end subroutine
@@ -432,10 +447,19 @@ contains
 
     ! finalize-video ( n:upscale n:fade-in n:fade-out s:fade-in-color s:fade-out-color s:frame-dir s:output-file s:audio-file -- )
     subroutine finalize_video()
+        call finalize_video_impl(.false.)
+    end subroutine
+
+    subroutine finalize_video_preview()
+        call finalize_video_impl(.true.)
+    end subroutine
+
+    subroutine finalize_video_impl(preview)
+        logical, intent(in) :: preview
         character(MAX_STRING_LENGTH) :: audio_file, output_file, frame_dir
         character(1024) :: command
         character(MAX_STRING_LENGTH) :: fade_in_color, fade_out_color
-        character(512) :: frame_pattern, filter_chain, scale_filter
+        character(512) :: frame_pattern, filter_chain, scale_filter, denoise_filter
         real :: fade_in, fade_out, fade_out_start
         integer :: upscale
 
@@ -458,20 +482,37 @@ contains
             scale_filter = ""
         end if
 
-        write(filter_chain, '(A,A,F0.2,A,A,A,F0.2,A,F0.2,A,A)') &
+        if (preview) then
+            denoise_filter = ""
+        else
+            denoise_filter = "nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0,"
+        end if
+
+        write(filter_chain, '(A,A,A,F0.2,A,A,A,F0.2,A,F0.2,A,A)') &
             trim(scale_filter), &
-            "nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0,fade=t=in:st=0:d=", fade_in, &
+            trim(denoise_filter), &
+            "fade=t=in:st=0:d=", fade_in, &
             ":c=", trim(fade_in_color), &
             ",fade=t=out:st=", fade_out_start, ":d=", fade_out, &
             ":c=", trim(fade_out_color)
 
-        write(command, '(A,I0,A,A,A,A,A,A,A,A,A)') &
-            "ffmpeg -nostdin -y -framerate ", int(fps), &
-            " -i '", trim(frame_pattern), &
-            "' -i '", trim(audio_file), &
-            "' -vf '", trim(filter_chain), &
-            "' -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest '", &
-            trim(output_file), "'"
+        if (preview) then
+            write(command, '(A,I0,A,A,A,A,A,A,A,A,A)') &
+                "ffmpeg -nostdin -y -framerate ", int(fps), &
+                " -i '", trim(frame_pattern), &
+                "' -i '", trim(audio_file), &
+                "' -vf '", trim(filter_chain), &
+                "' -c:v libx264 -preset ultrafast -threads 0 -pix_fmt yuv420p -c:a aac -shortest '", &
+                trim(output_file), "'"
+        else
+            write(command, '(A,I0,A,A,A,A,A,A,A,A,A)') &
+                "ffmpeg -nostdin -y -framerate ", int(fps), &
+                " -i '", trim(frame_pattern), &
+                "' -i '", trim(audio_file), &
+                "' -vf '", trim(filter_chain), &
+                "' -c:v libx264 -threads 0 -pix_fmt yuv420p -c:a aac -shortest '", &
+                trim(output_file), "'"
+        end if
 
         call execute_command_line(command)
     end subroutine
@@ -521,6 +562,11 @@ contains
 
         frame = int(pop_number())
         pixels = pop_image()
+
+        ! roll at period boundaries
+        if (chroma_period > 0 .and. mod(frame, int(chroma_period)) == 0) then
+            call roll_chroma()
+        end if
 
         if (.not. chroma_active) then
             call push_image(pixels)

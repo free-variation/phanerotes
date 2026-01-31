@@ -20,6 +20,8 @@ module cnn_autoencoder
         real, allocatable :: tensor(:, :,:,:)
     end type
 
+    real, parameter :: SLERP_THRESHOLD = 0.9995
+
     type :: dropout_cache
         real, allocatable :: dropout(:)
     end type
@@ -438,6 +440,49 @@ module cnn_autoencoder
            output = sigmoid_forward(output)
        end subroutine
 
+       pure function slerp_tensor(a, b, t) result(output)
+           real, intent(in) :: a(:,:,:,:), b(:,:,:,:)
+           real, intent(in) :: t
+           real, allocatable :: output(:,:,:,:)
+
+           real :: norm_a, norm_b, dot_ab, cos_theta, theta, sin_theta
+           real :: scale_a, scale_b, norm_out
+           real, allocatable :: a_flat(:), b_flat(:)
+           integer :: n
+
+           n = size(a)
+           a_flat = reshape(a, [n])
+           b_flat = reshape(b, [n])
+
+           norm_a = norm2(a_flat)
+           norm_b = norm2(b_flat)
+
+           if (norm_a < 1e-8 .or. norm_b < 1e-8) then
+               output = (1.0 - t)*a + t*b
+               return
+           end if
+
+           dot_ab = dot_product(a_flat, b_flat)
+           cos_theta = dot_ab / (norm_a * norm_b)
+           cos_theta = max(-1.0, min(1.0, cos_theta))
+
+           if (cos_theta > SLERP_THRESHOLD) then
+               output = (1.0 - t)*a + t*b
+               return
+           end if
+
+           theta = acos(cos_theta)
+           sin_theta = sin(theta)
+
+           scale_a = sin((1.0 - t)*theta) / sin_theta
+           scale_b = sin(t * theta) / sin_theta
+
+           output = scale_a * a + scale_b * b
+
+           norm_out = (1.0 - t)*norm_a + t*norm_b
+           output = output * (norm_out / norm2(reshape(output, [n])))
+       end function
+
        subroutine decode_latent_interpolated(net, latent_a, latent_b, &
                encoder_acts_a, encoder_acts_b, alpha, output)
            type(autoencoder), intent(inout) :: net
@@ -451,14 +496,18 @@ module cnn_autoencoder
            real, allocatable :: aggregated_input(:, :,:,:)
            integer :: i, skip_idx
 
-           layer_input = alpha * latent_a + (1.0 - alpha) * latent_b
+           ! no longer linear
+           ! layer_input = alpha * latent_a + (1.0 - alpha) * latent_b
+           layer_input = slerp_tensor(latent_a, latent_b, 1.0 - alpha)
 
            do i = 1, net%config%num_layers - 1
                layer_input = upsample(layer_input, net%config%stride)
 
                skip_idx = net%config%num_layers - i
-               skip_interp = alpha * encoder_acts_a(skip_idx)%tensor + &
-                   (1.0 - alpha) * encoder_acts_b(skip_idx)%tensor
+               !skip_interp = alpha * encoder_acts_a(skip_idx)%tensor + &
+               !    (1.0 - alpha) * encoder_acts_b(skip_idx)%tensor
+               skip_interp = slerp_tensor(encoder_acts_a(skip_idx)%tensor,&
+                   encoder_acts_b(skip_idx)%tensor, 1.0 - alpha)
 
                if (net%config%concatenate) then
                    aggregated_input = concatenate_channels(layer_input, skip_interp)

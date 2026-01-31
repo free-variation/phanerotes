@@ -5,9 +5,15 @@ clear-video
 96 24 "projects/fort-greene-2/fort-greene-2.mp3" analyze-audio
 4 establish-themes
 
+# effects (disabled)
+0 0 0 0 0 set-camera-motion
+0 0 0 set-chroma
+
 : flush-frames
     0?
     sdup s. cr
+    effect-frame wobble
+    effect-frame aberrate
     save
     1 - flush-frames ;
 

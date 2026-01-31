@@ -263,6 +263,8 @@ module interpreter
                 call generate_transition()
             case ("finalize-video")
                 call finalize_video()
+            case ("preview-video")
+                call finalize_video_preview()
             case ("get-total-frames")
                 call push_number(real(num_audio_frames))
             case ("get-energy")
@@ -279,6 +281,8 @@ module interpreter
                 call aberrate()
             case ("load-frames")
                 call load_frames()
+            case ("set-seed")
+                call set_seed()
 
             case default
                 print *, "unknown word: ", trim(token)
