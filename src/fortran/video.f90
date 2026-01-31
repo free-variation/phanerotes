@@ -528,7 +528,7 @@ contains
                 " -i '", trim(frame_pattern), &
                 "' -i '", trim(audio_file), &
                 "' -vf '", trim(filter_chain), &
-                "' -c:v libx264 -threads 0 -pix_fmt yuv420p -c:a aac -shortest '", &
+                "' -c:v libx264 -preset ultrafast -threads 0 -pix_fmt yuv420p -c:a aac -shortest '", &
                 trim(output_file), "'"
         end if
 
