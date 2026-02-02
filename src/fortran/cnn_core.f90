@@ -124,7 +124,7 @@ module cnn_core
 
             real, allocatable :: col_form(:,:)
             real, allocatable :: W(:,:)
-            integer :: batch_size, m, n, k, b, col_start, col_end
+            integer :: batch_size, m, n, k, b, j, col_start, col_end
             integer :: in_height, in_width, out_width, out_height
             real, allocatable :: output_matrix(:,:)
 
@@ -146,7 +146,9 @@ module cnn_core
             out_height = (in_height + 2*layer%padding - layer%kernel_height) / layer%stride + 1
 
             ! Bias is per output channel, broadcast across all spatial positions
-            output_matrix = output_matrix + spread(layer%bias, 2, n)
+            do j = 1, n
+                output_matrix(:, j) = output_matrix(:, j) + layer%bias
+            end do
 
             ! Reshape to 4D: (channels, height, width, batch)
             ! im2col orders columns with width varying fastest, so use order=[1,3,2]
