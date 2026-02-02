@@ -3,7 +3,7 @@ set -e
 
 MODE="${1:-gui}"  # gui or text
 INPUT="${2:-projects/fort-greene-2/make_video.phan}"
-THREADS="${3:-4}"
+THREADS="${3:-8}"
 WAIT="${4:-45}"
 DURATION="${5:-60}"
 
@@ -46,14 +46,16 @@ PID=$!
 
 echo "PID: $PID (fpm wrapper)"
 
-# Wait a moment for fpm to spawn the actual binary, then find it
-sleep 2
-REAL_PID=$(pgrep -n phanerotes || echo "")
-
-if [ -n "$REAL_PID" ]; then
-    echo "Actual binary PID: $REAL_PID"
-    PID=$REAL_PID
-fi
+# Wait for fpm to spawn the actual binary
+for i in {1..10}; do
+    sleep 1
+    REAL_PID=$(pgrep -n phanerotes 2>/dev/null || echo "")
+    if [ -n "$REAL_PID" ]; then
+        echo "Actual binary PID: $REAL_PID"
+        PID=$REAL_PID
+        break
+    fi
+done
 
 echo "Waiting ${WAIT}s for setup..."
 sleep $WAIT
