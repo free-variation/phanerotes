@@ -1,4 +1,5 @@
 module cnn_core
+    use omp_lib
     implicit none
 
     interface
@@ -50,7 +51,7 @@ module cnn_core
             padded = 0.0
             padded(:, padding+1:padding+nh, padding+1:padding+nw, :) = input
 
-            !$omp parallel do default(shared) collapse(3) &
+            !$omp parallel do if(.not. omp_in_parallel()) default(shared) collapse(3) &
             !$omp& private(ib, oj, oi, col_idx, i_start, j_start, kj, ki, base_idx)
             do ib = 1, nb
                 do oj = 1, out_h
@@ -87,7 +88,7 @@ module cnn_core
             allocate(padded(nc, nh + 2*padding, nw + 2*padding, nb))
             padded = 0.0
 
-            !$omp parallel do default(shared) &
+            !$omp parallel do if(.not. omp_in_parallel()) default(shared) &
             !$omp& private(ib, oj, oi, col_idx, i_start, j_start, kj, ki, base_idx)
             do ib = 1, nb
                 do oj = 1, out_h
@@ -213,48 +214,35 @@ module cnn_core
         end subroutine
 
         pure function upsample(input, factor)
-            ! Layout: (channels, height, width, batch)
             real, intent(in) :: input(:,:,:,:)
             integer, intent(in) :: factor
             real, allocatable :: upsample(:,:,:,:)
+            integer :: c, h, w, b, i, j
 
-            integer :: batch_size, num_channels, width, height
-            integer :: i, j, fi, fj
+            c = size(input, 1); h = size(input, 2)
+            w = size(input, 3); b = size(input, 4)
+            allocate(upsample(c, h * factor, w * factor, b))
 
-            num_channels = size(input, 1)
-            height = size(input, 2)
-            width = size(input, 3)
-            batch_size = size(input, 4)
-
-            allocate(upsample(num_channels, factor * height, factor * width, batch_size))
-
-            do j = 1, height
-                do i = 1, width
-                    do fj = 1, factor
-                        do fi = 1, factor
-                            upsample(:, (j - 1)*factor + fj, (i - 1)*factor + fi, :) = input(:, j, i, :)
-                        end do
-                    end do
+            do i = 1, w * factor
+                do j = 1, h * factor
+                    upsample(:, j, i, :) = input(:, (j-1)/factor + 1, (i-1)/factor + 1, :)
                 end do
             end do
         end function
 
         pure function upsample_backward(grad_output, factor)
-            ! Layout: (channels, height, width, batch)
             real, intent(in) :: grad_output(:,:,:,:)
             integer, intent(in) :: factor
             real, allocatable :: upsample_backward(:,:,:,:)
-
-            integer :: width, height
-            integer :: i, j
+            integer :: height, width, i, j
 
             height = size(grad_output, 2) / factor
             width = size(grad_output, 3) / factor
 
             allocate(upsample_backward(size(grad_output,1), height, width, size(grad_output,4)))
 
-            do j = 1, height
-                do i = 1, width
+            do i = 1, width
+                do j = 1, height
                     upsample_backward(:, j, i, :) = sum(sum( &
                         grad_output(:, (j-1)*factor+1:j*factor, (i-1)*factor+1:i*factor, :), dim=3), dim=2)
                 end do

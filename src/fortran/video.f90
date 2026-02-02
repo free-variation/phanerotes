@@ -15,7 +15,6 @@ module video
     type(image_entry), allocatable :: images(:)
     real, allocatable :: tiles(:,:,:,:), latent_tiles(:,:,:,:)
     real, allocatable :: cosines(:,:)
-    type(tensor_cache), allocatable :: encoder_activations(:,:)
 
     ! Audio: (num_frames x 14 features)
     real, allocatable :: audio_features(:,:)
@@ -49,7 +48,6 @@ contains
         if (allocated(tiles)) deallocate(tiles)
         if (allocated(latent_tiles)) deallocate(latent_tiles)
         if (allocated(cosines)) deallocate(cosines)
-        if (allocated(encoder_activations)) deallocate(encoder_activations)
         if (allocated(theme_audio_boundaries)) deallocate(theme_audio_boundaries)
         if (allocated(theme_tiles)) deallocate(theme_tiles)
         if (allocated(tile_hits)) deallocate(tile_hits)
@@ -159,19 +157,11 @@ contains
 
         ! compute the latent tensors for all the tiles
         allocate(latent_tiles(latent_channels, latent_height, latent_width, total_tiles))
-        allocate(encoder_activations(total_tiles, net%config%num_layers - 1))
         batch_size = int(pop_number())
         do i = 1, total_tiles, batch_size
             j = min(i + batch_size - 1, total_tiles)
             call encoder_forward(net, tiles(:,:,:,i:j), latent, activations)
             latent_tiles(:,:,:,i:j) = latent
-
-            ! split batch activations into per-tile storage
-            do k = i, j
-                do layer = 1, size(activations)
-                    encoder_activations(k, layer)%tensor = activations(layer)%tensor(:,:,:,k-i+1:k-i+1)
-                end do
-            end do
         end do
 
         ! compute cosine similarity between latent tiles
@@ -325,6 +315,9 @@ contains
         integer(8) :: t_start, t_end, count_rate
         real :: elapsed, per_frame
 
+        type(tensor_cache), allocatable :: acts_start(:), acts_end(:)
+        real, allocatable :: dummy_latent(:,:,:,:)
+
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
 
@@ -379,6 +372,14 @@ contains
         channels = size(tiles, 1)
         height = size(tiles, 2)
         width = size(tiles, 3)
+
+        ! Re-run encoder for just the two active tiles to get skip connections
+        call encoder_forward(net, tiles(:,:,:,start_tile:start_tile), &
+            dummy_latent, acts_start)
+
+        call encoder_forward(net, tiles(:,:,:,end_tile:end_tile), &
+            dummy_latent, acts_end)
+
         allocate(frames(channels, height, width, num_frames))
 
         ! decode frames in parallel
@@ -388,8 +389,7 @@ contains
             alpha = real(num_frames - i) / real(max(num_frames - 1, 1))
             call decode_latent_interpolated(net,&
                 latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile),&
-                encoder_activations(start_tile, :), encoder_activations(end_tile, :),&
-                alpha, output)
+                acts_start, acts_end, alpha, output)
             frames(:,:,:,i) = output(:,:,:,1)
         end do
         !$omp end parallel do
@@ -412,7 +412,6 @@ contains
 
         call push_number(real(current_frame))
         call push_number(real(num_frames))
-
     end subroutine
 
     ! set-camera-motion ( n:pan-x n:pan-y n:rotation n:zoom n:frequency -- )

@@ -18,7 +18,6 @@ contains
 
         testsuite = [ &
             new_unittest("prepare_tiles_dimensions", test_prepare_tiles_dimensions), &
-            new_unittest("prepare_tiles_encoder_activations", test_prepare_tiles_encoder_activations), &
             new_unittest("prepare_tiles_cosines_diagonal", test_prepare_tiles_cosines_diagonal), &
             new_unittest("prepare_tiles_cosines_symmetric", test_prepare_tiles_cosines_symmetric), &
             new_unittest("analyze_audio", test_analyze_audio), &
@@ -69,30 +68,6 @@ contains
         call check(error, size(cosines, 1) == total_tiles, "cosines rows should match total tiles")
         if (allocated(error)) return
         call check(error, size(cosines, 2) == total_tiles, "cosines cols should match total tiles")
-    end subroutine
-
-
-    subroutine test_prepare_tiles_encoder_activations(error)
-        type(error_type), allocatable, intent(out) :: error
-        integer :: total_tiles, num_layers, i, layer
-
-        call setup()
-
-        total_tiles = size(tiles, 4)
-        num_layers = net%config%num_layers - 1
-
-        call check(error, size(encoder_activations, 1) == total_tiles, "encoder_activations should have total_tiles rows")
-        if (allocated(error)) return
-        call check(error, size(encoder_activations, 2) == num_layers, "encoder_activations should have num_layers-1 cols")
-        if (allocated(error)) return
-
-        ! check each activation tensor is allocated
-        do i = 1, total_tiles
-            do layer = 1, num_layers
-                call check(error, allocated(encoder_activations(i, layer)%tensor), "activation tensor should be allocated")
-                if (allocated(error)) return
-            end do
-        end do
     end subroutine
 
 
