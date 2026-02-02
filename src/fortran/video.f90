@@ -111,6 +111,12 @@ contains
         type(tensor_cache), allocatable :: activations(:)
         integer :: layer
 
+        if (allocated(images)) deallocate(images)
+        if (allocated(tiles)) deallocate(tiles)
+        if (allocated(latent_tiles)) deallocate(latent_tiles)
+        if (allocated(cosines)) deallocate(cosines)
+        if (allocated(tile_hits)) deallocate(tile_hits)
+
         project_dir = pop_string()
         tile_width = int(pop_number())
         tile_height = int(pop_number())

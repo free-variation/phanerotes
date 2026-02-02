@@ -3,7 +3,7 @@ set -e
 
 MODE="${1:-gui}"  # gui or text
 INPUT="${2:-projects/fort-greene-2/make_video.phan}"
-THREADS="${3:-8}"
+THREADS="${3:-4}"
 WAIT="${4:-45}"
 DURATION="${5:-60}"
 

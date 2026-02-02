@@ -4,7 +4,7 @@ module command
 
     implicit none
     
-    integer, parameter :: MAX_STRING_LENGTH = 256
+    integer, parameter :: MAX_STRING_LENGTH = 1024
     integer, parameter :: MAX_IMAGE_STACK = 1024
     integer, parameter :: MAX_NUMBER_STACK = 1024*1024
     integer, parameter :: MAX_STRING_STACK = 1024*1024
