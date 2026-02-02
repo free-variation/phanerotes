@@ -322,6 +322,8 @@ contains
         character(MAX_STRING_LENGTH) :: filename
         integer :: channels, height, width
         real :: theme_affinity, continuity, best_theme_affinity, best_continuity
+        integer(8) :: t_start, t_end, count_rate
+        real :: elapsed, per_frame
 
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
@@ -380,6 +382,7 @@ contains
         allocate(frames(channels, height, width, num_frames))
 
         ! decode frames in parallel
+        call system_clock(t_start, count_rate)
         !$omp parallel do private(i, alpha, output) schedule(dynamic)
         do i = 1, num_frames
             alpha = real(num_frames - i) / real(max(num_frames - 1, 1))
@@ -390,6 +393,11 @@ contains
             frames(:,:,:,i) = output(:,:,:,1)
         end do
         !$omp end parallel do
+        call system_clock(t_end)
+
+        elapsed = real(t_end - t_start) / real(count_rate)
+        per_frame = elapsed / real(num_frames)
+        print '(A,F6.2,A,F6.0,A)', "  decode: ", elapsed, "s (", per_frame * 1000, "ms/frame)"
 
         ! push frames and filenames to stacks (reverse order so first frame ends on top)
         do i = num_frames, 1, -1

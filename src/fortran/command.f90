@@ -436,7 +436,4 @@ module command
             end do
         end subroutine
 
-
-        ! ---------- Create movies ----------
-
 end module
