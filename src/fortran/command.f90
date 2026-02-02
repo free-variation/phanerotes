@@ -125,6 +125,12 @@ module command
             call push_string(s)
         end subroutine
 
+        ! sdrop ( s -- )
+        subroutine drop_string()
+            character(MAX_STRING_LENGTH) :: s
+            s = pop_string()
+        end subroutine
+
         ! over ( n1 n2 -- n1 n2 n1 )
         subroutine over_number()
             real :: num1, num2

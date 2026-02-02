@@ -27,6 +27,12 @@ module cnn_core
         real, allocatable :: col_cache(:,:)
     end type
 
+    type :: conv_workspace
+        real, allocatable :: col_form(:,:)
+        real, allocatable :: padded(:,:,:,:)
+        real, allocatable :: output_matrix(:,:)
+    end type
+
 
     contains
         subroutine im2col(input, kernel_width, kernel_height, stride, padding, col_out)
@@ -250,5 +256,123 @@ module cnn_core
                 end do
             end do
         end function
+
+        subroutine init_conv_workspace(ws, max_col_rows, max_col_cols, max_padded_shape, max_out_channels)
+            type(conv_workspace), intent(out) :: ws
+            integer, intent(in) :: max_col_rows, max_col_cols
+            integer, intent(in) :: max_padded_shape(4)
+            integer, intent(in) :: max_out_channels
+
+            allocate(ws%col_form(max_col_rows, max_col_cols))
+            allocate(ws%padded(max_padded_shape(1), max_padded_shape(2), max_padded_shape(3), max_padded_shape(4)))
+            allocate(ws%output_matrix(max_out_channels, max_col_cols))
+        end subroutine
+
+        subroutine im2col_ws(input, kernel_width, kernel_height, stride, padding, ws, col_rows, col_cols)
+            real, intent(in) :: input(:,:,:,:)
+            integer, intent(in) :: kernel_width, kernel_height, stride, padding
+            type(conv_workspace), intent(inout) :: ws
+            integer, intent(out) :: col_rows, col_cols
+
+            integer :: nc, nh, nw, nb, out_w, out_h
+            integer :: ib, oi, oj, col_idx, i_start, j_start, ki, kj, base_idx
+
+            nc = size(input, 1)
+            nh = size(input, 2)
+            nw = size(input, 3)
+            nb = size(input, 4)
+
+            out_h = (nh + 2*padding - kernel_height) / stride + 1
+            out_w = (nw + 2*padding - kernel_width) / stride + 1
+
+            col_rows = nc * kernel_width * kernel_height
+            col_cols = out_w * out_h * nb
+
+            ws%padded(:nc, :nh+2*padding, :nw+2*padding, :nb) = 0.0
+            ws%padded(:nc, padding+1:padding+nh, padding+1:padding+nw, :nb) = input
+
+            !$omp parallel do if(.not. omp_in_parallel()) default(shared) collapse(3) &
+            !$omp& private(ib, oj, oi, col_idx, i_start, j_start, kj, ki, base_idx)
+            do ib = 1, nb
+                do oj = 1, out_h
+                    do oi = 1, out_w
+                        col_idx = (ib - 1)*out_w*out_h + (oj - 1) * out_w + oi
+                        i_start = (oi - 1) * stride + 1
+                        j_start = (oj - 1) * stride + 1
+
+                        do kj = 1, kernel_height
+                            do ki = 1, kernel_width
+                                base_idx = (kj-1)*kernel_width*nc + (ki-1)*nc + 1
+                                ws%col_form(base_idx:base_idx+nc-1, col_idx) = &
+                                    ws%padded(:nc, j_start+kj-1, i_start+ki-1, ib)
+                            end do
+                        end do
+                    end do
+                end do
+            end do
+            !$omp end parallel do
+        end subroutine
+
+        subroutine conv_forward_ws(layer, input, ws, output)
+            type(conv_layer), intent(inout) :: layer
+            real, intent(in) :: input(:,:,:,:)
+            type(conv_workspace), intent(inout) :: ws
+            real, intent(inout) :: output(:,:,:,:)
+
+            integer :: batch_size, m, n, k, b, j, col_idx, ow, oh
+            integer :: in_height, in_width, out_width, out_height
+            integer :: col_rows, col_cols
+
+            in_height = size(input, 2)
+            in_width = size(input, 3)
+            batch_size = size(input, 4)
+
+            call im2col_ws(input, layer%kernel_width, layer%kernel_height, layer%stride, layer%padding, ws, col_rows, col_cols)
+
+            m = layer%out_channels
+            k = layer%in_channels * layer%kernel_width * layer%kernel_height
+            n = col_cols
+
+            call sgemm("N", "N", m, n, k, 1.0, layer%weights, m, ws%col_form, k, 0.0, ws%output_matrix, m)
+
+            out_width =  (in_width + 2*layer%padding - layer%kernel_width) / layer%stride + 1
+            out_height = (in_height + 2*layer%padding - layer%kernel_height) / layer%stride + 1
+
+            do j = 1, n
+                ws%output_matrix(:m, j) = ws%output_matrix(:m, j) + layer%bias
+            end do
+
+            do b = 1, batch_size
+                do ow = 1, out_width
+                    do oh = 1, out_height
+                        col_idx = (b-1)*out_width*out_height + (oh-1)*out_width + ow
+                        output(:m, oh, ow, b) = ws%output_matrix(:m, col_idx)
+                    end do
+                end do
+            end do
+
+            if (layer%training) then
+                layer%input_cache = input
+                if (.not. allocated(layer%col_cache)) allocate(layer%col_cache(col_rows, col_cols))
+                layer%col_cache(:col_rows, :col_cols) = ws%col_form(:col_rows, :col_cols)
+            end if
+        end subroutine
+
+        pure subroutine upsample_ws(input, factor, output)
+            real, intent(in) :: input(:,:,:,:)
+            integer, intent(in) :: factor
+            real, intent(inout) :: output(:,:,:,:)
+            integer :: h, w, i, j
+
+            h = size(input, 2)
+            w = size(input, 3)
+
+            do i = 1, w * factor
+                do j = 1, h * factor
+                    output(:, j, i, :) = input(:, (j-1)/factor + 1, (i-1)/factor + 1, :)
+                end do
+            end do
+        end subroutine
+
  end module
 

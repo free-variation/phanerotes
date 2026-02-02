@@ -34,5 +34,14 @@ module nn
             sigmoid_backward = grad_out * y * (1.0 - y)
         end function
 
+        pure subroutine relu_inplace(x)
+            real, intent(inout) :: x(:,:,:,:)
+            where (x < 0.0) x = 0.0
+        end subroutine
+
+        pure subroutine sigmoid_inplace(x)
+            real, intent(inout) :: x(:,:,:,:)
+            x = 1.0 / (1.0 + exp(-x))
+        end subroutine
 
 end module

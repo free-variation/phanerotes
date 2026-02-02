@@ -187,6 +187,8 @@ module interpreter
             
             case ("sdup")
                 call dup_string()
+            case ("sdrop")
+                call drop_string()
             case ("dup")
                 call dup_number()
             case ("drop")

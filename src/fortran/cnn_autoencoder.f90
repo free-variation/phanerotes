@@ -37,6 +37,18 @@ module cnn_autoencoder
         type(dropout_cache), allocatable :: skip_dropout_cache(:)
     end type
 
+    type :: decode_workspace
+        type(conv_workspace), allocatable :: conv_ws(:)
+        type(conv_workspace) :: skip_ws
+        real, allocatable :: layer_input(:,:,:,:)
+        real, allocatable :: layer_output(:,:,:,:)
+        real, allocatable :: skip_interp(:,:,:,:)
+        real, allocatable :: skip_projected(:,:,:,:)
+        real, allocatable :: aggregated(:,:,:,:)
+        real, allocatable :: upsampled(:,:,:,:)
+        real, allocatable :: slerp_tmp(:,:,:,:)
+    end type
+
     contains
         function init_layer(config, in_channels, out_channels, stride) result(layer)
             type(autoencoder_config), intent(in) :: config
@@ -122,7 +134,7 @@ module cnn_autoencoder
 
         subroutine set_training(net, training)
            type(autoencoder), intent(inout) ::net
-           logical, intent(in) :: training 
+           logical, intent(in) :: training
 
            integer :: i
 
@@ -134,6 +146,60 @@ module cnn_autoencoder
            do i = 1, net%config%num_layers - 1
                net%skip_projection(i)%training = training
            end do
+       end subroutine
+
+       subroutine init_decode_workspace(ws, net, latent_h, latent_w, batch_size)
+           type(decode_workspace), intent(out) :: ws
+           type(autoencoder), intent(in) :: net
+           integer, intent(in) :: latent_h, latent_w, batch_size
+
+           integer :: i, h, w, stride, num_layers
+           integer :: max_channels, max_h, max_w
+           integer :: in_ch, out_ch, skip_ch, agg_ch
+           integer :: col_rows, col_cols, padded_shape(4)
+
+           stride = net%config%stride
+           num_layers = net%config%num_layers
+
+           allocate(ws%conv_ws(num_layers))
+
+           h = latent_h
+           w = latent_w
+           max_channels = net%encoder(num_layers)%out_channels
+           max_h = latent_h
+           max_w = latent_w
+
+           do i = 1, num_layers
+               h = h * stride
+               w = w * stride
+               if (h > max_h) max_h = h
+               if (w > max_w) max_w = w
+
+               in_ch = net%decoder(i)%in_channels
+               out_ch = net%decoder(i)%out_channels
+               if (in_ch > max_channels) max_channels = in_ch
+               if (out_ch > max_channels) max_channels = out_ch
+
+               col_rows = in_ch * net%config%kernel_width * net%config%kernel_height
+               col_cols = h * w * batch_size
+               padded_shape = [in_ch, h + 2*net%config%padding, w + 2*net%config%padding, batch_size]
+
+               call init_conv_workspace(ws%conv_ws(i), col_rows, col_cols, padded_shape, out_ch)
+           end do
+
+           skip_ch = max_channels
+           col_rows = skip_ch * 1 * 1
+           col_cols = max_h * max_w * batch_size
+           padded_shape = [skip_ch, max_h, max_w, batch_size]
+           call init_conv_workspace(ws%skip_ws, col_rows, col_cols, padded_shape, max_channels)
+
+           allocate(ws%layer_input(max_channels, max_h, max_w, batch_size))
+           allocate(ws%layer_output(max_channels, max_h, max_w, batch_size))
+           allocate(ws%skip_interp(max_channels, max_h, max_w, batch_size))
+           allocate(ws%skip_projected(max_channels, max_h, max_w, batch_size))
+           allocate(ws%aggregated(max_channels * 2, max_h, max_w, batch_size))
+           allocate(ws%upsampled(max_channels, max_h, max_w, batch_size))
+           allocate(ws%slerp_tmp(max_channels, max_h, max_w, batch_size))
        end subroutine
 
        pure function concatenate_channels(a, b)
@@ -524,6 +590,132 @@ module cnn_autoencoder
            layer_input = upsample(layer_input, net%config%stride)
            call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
            output = sigmoid_forward(output)
+       end subroutine
+
+       subroutine slerp_tensor_ws(a, b, t, output)
+           real, intent(in) :: a(:,:,:,:), b(:,:,:,:)
+           real, intent(in) :: t
+           real, intent(inout) :: output(:,:,:,:)
+
+           real :: norm_a, norm_b, dot_ab, cos_theta, theta, sin_theta
+           real :: scale_a, scale_b, norm_out
+           integer :: n, c, h, w, batch
+
+           c = size(a, 1); h = size(a, 2); w = size(a, 3); batch = size(a, 4)
+           n = c * h * w * batch
+
+           norm_a = norm2(reshape(a, [n]))
+           norm_b = norm2(reshape(b, [n]))
+
+           if (norm_a < 1e-8 .or. norm_b < 1e-8) then
+               output(:c, :h, :w, :batch) = (1.0 - t)*a + t*b
+               return
+           end if
+
+           dot_ab = sum(a * b)
+           cos_theta = dot_ab / (norm_a * norm_b)
+           cos_theta = max(-1.0, min(1.0, cos_theta))
+
+           if (cos_theta > SLERP_THRESHOLD) then
+               output(:c, :h, :w, :batch) = (1.0 - t)*a + t*b
+               return
+           end if
+
+           theta = acos(cos_theta)
+           sin_theta = sin(theta)
+
+           scale_a = sin((1.0 - t)*theta) / sin_theta
+           scale_b = sin(t * theta) / sin_theta
+
+           output(:c, :h, :w, :batch) = scale_a * a + scale_b * b
+
+           norm_out = (1.0 - t)*norm_a + t*norm_b
+           output(:c, :h, :w, :batch) = output(:c, :h, :w, :batch) * (norm_out / norm2(reshape(output(:c, :h, :w, :batch), [n])))
+       end subroutine
+
+       subroutine concatenate_channels_ws(a, b, output)
+           real, intent(in) :: a(:,:,:,:), b(:,:,:,:)
+           real, intent(inout) :: output(:,:,:,:)
+           integer :: nc1, nc2, h, w, batch
+
+           nc1 = size(a, 1); nc2 = size(b, 1)
+           h = size(a, 2); w = size(a, 3); batch = size(a, 4)
+
+           output(:nc1, :h, :w, :batch) = a
+           output(nc1+1:nc1+nc2, :h, :w, :batch) = b
+       end subroutine
+
+       subroutine decode_latent_interpolated_ws(net, latent_a, latent_b, &
+               encoder_acts_a, encoder_acts_b, alpha, ws, output)
+           type(autoencoder), intent(inout) :: net
+           real, intent(in) :: latent_a(:,:,:,:), latent_b(:,:,:,:)
+           type(tensor_cache), intent(in) :: encoder_acts_a(:), encoder_acts_b(:)
+           real, intent(in) :: alpha
+           type(decode_workspace), intent(inout) :: ws
+           real, intent(inout) :: output(:,:,:,:)
+
+           integer :: i, skip_idx, stride
+           integer :: c_in, h_in, w_in, c_out, h_out, w_out, c_skip, c_agg, batch
+           integer :: lat_c, lat_h, lat_w
+
+           stride = net%config%stride
+           batch = size(latent_a, 4)
+           lat_c = size(latent_a, 1)
+           lat_h = size(latent_a, 2)
+           lat_w = size(latent_a, 3)
+
+           call slerp_tensor_ws(latent_a, latent_b, 1.0 - alpha, ws%layer_input)
+           c_in = lat_c; h_in = lat_h; w_in = lat_w
+
+           do i = 1, net%config%num_layers - 1
+               h_out = h_in * stride
+               w_out = w_in * stride
+               call upsample_ws(ws%layer_input(:c_in, :h_in, :w_in, :batch), stride, &
+                   ws%upsampled(:c_in, :h_out, :w_out, :batch))
+
+               skip_idx = net%config%num_layers - i
+               c_skip = size(encoder_acts_a(skip_idx)%tensor, 1)
+
+               call slerp_tensor_ws(encoder_acts_a(skip_idx)%tensor, &
+                   encoder_acts_b(skip_idx)%tensor, 1.0 - alpha, ws%skip_interp)
+
+               if (net%config%concatenate) then
+                   c_agg = c_in + c_skip
+                   call concatenate_channels_ws(ws%upsampled(:c_in, :h_out, :w_out, :batch), &
+                       ws%skip_interp(:c_skip, :h_out, :w_out, :batch), &
+                       ws%aggregated(:c_agg, :h_out, :w_out, :batch))
+               else
+                   c_out = net%decoder(i)%in_channels
+                   call conv_forward_ws(net%skip_projection(i), &
+                       ws%skip_interp(:c_skip, :h_out, :w_out, :batch), &
+                       ws%skip_ws, ws%skip_projected(:c_out, :h_out, :w_out, :batch))
+                   c_agg = c_in
+                   ws%aggregated(:c_agg, :h_out, :w_out, :batch) = &
+                       ws%upsampled(:c_in, :h_out, :w_out, :batch) + &
+                       ws%skip_projected(:c_out, :h_out, :w_out, :batch)
+               end if
+
+               c_out = net%decoder(i)%out_channels
+               call conv_forward_ws(net%decoder(i), ws%aggregated(:c_agg, :h_out, :w_out, :batch), &
+                   ws%conv_ws(i), ws%layer_output(:c_out, :h_out, :w_out, :batch))
+
+               call relu_inplace(ws%layer_output(:c_out, :h_out, :w_out, :batch))
+
+               ws%layer_input(:c_out, :h_out, :w_out, :batch) = ws%layer_output(:c_out, :h_out, :w_out, :batch)
+               c_in = c_out; h_in = h_out; w_in = w_out
+           end do
+
+           h_out = h_in * stride
+           w_out = w_in * stride
+           call upsample_ws(ws%layer_input(:c_in, :h_in, :w_in, :batch), stride, &
+               ws%upsampled(:c_in, :h_out, :w_out, :batch))
+
+           c_out = net%decoder(net%config%num_layers)%out_channels
+           call conv_forward_ws(net%decoder(net%config%num_layers), &
+               ws%upsampled(:c_in, :h_out, :w_out, :batch), &
+               ws%conv_ws(net%config%num_layers), output)
+
+           call sigmoid_inplace(output)
        end subroutine
 
    end module

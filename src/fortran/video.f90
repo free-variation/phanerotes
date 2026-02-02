@@ -317,6 +317,8 @@ contains
 
         type(tensor_cache), allocatable :: acts_start(:), acts_end(:)
         real, allocatable :: dummy_latent(:,:,:,:)
+        type(decode_workspace), allocatable :: workspaces(:)
+        integer :: tid, nthreads, latent_h, latent_w
 
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
@@ -382,15 +384,23 @@ contains
 
         allocate(frames(channels, height, width, num_frames))
 
+        latent_h = size(latent_tiles, 2)
+        latent_w = size(latent_tiles, 3)
+        nthreads = omp_get_max_threads()
+        allocate(workspaces(0:nthreads-1))
+        do tid = 0, nthreads-1
+            call init_decode_workspace(workspaces(tid), net, latent_h, latent_w, 1)
+        end do
+
         ! decode frames in parallel
         call system_clock(t_start, count_rate)
-        !$omp parallel do private(i, alpha, output) schedule(dynamic)
+        !$omp parallel do private(i, alpha, tid) schedule(dynamic)
         do i = 1, num_frames
+            tid = omp_get_thread_num()
             alpha = real(num_frames - i) / real(max(num_frames - 1, 1))
-            call decode_latent_interpolated(net,&
+            call decode_latent_interpolated_ws(net,&
                 latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile),&
-                acts_start, acts_end, alpha, output)
-            frames(:,:,:,i) = output(:,:,:,1)
+                acts_start, acts_end, alpha, workspaces(tid), frames(:,:,:,i:i))
         end do
         !$omp end parallel do
         call system_clock(t_end)
