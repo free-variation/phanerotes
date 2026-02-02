@@ -483,6 +483,98 @@ module cnn_autoencoder
            output = output * (norm_out / norm2(reshape(output, [n])))
        end function
 
+       subroutine slerp_tensor_batched(a, b, alphas, output)
+           real, intent(in) :: a(:,:,:,:), b(:,:,:,:)
+           real, intent(in) :: alphas(:)
+           real, allocatable, intent(out) :: output(:,:,:,:)
+
+           real :: norm_a, norm_b, dot_ab, cos_theta, theta, sin_theta
+           real :: scale_a, scale_b, norm_out, t
+           integer :: n, c, h, w, batch_size, i
+
+           c = size(a, 1); h = size(a, 2); w = size(a, 3)
+           batch_size = size(alphas)
+           n = c * h * w
+
+           norm_a = norm2(reshape(a, [n]))
+           norm_b = norm2(reshape(b, [n]))
+
+           allocate(output(c, h, w, batch_size))
+
+           if (norm_a < 1e-8 .or. norm_b < 1e-8) then
+               do i = 1, batch_size
+                   t = alphas(i)
+                   output(:,:,:,i) = (1.0 - t)*a(:,:,:,1) + t*b(:,:,:,1)
+               end do
+               return
+           end if
+
+           dot_ab = sum(a(:,:,:,1) * b(:,:,:,1))
+           cos_theta = dot_ab / (norm_a * norm_b)
+           cos_theta = max(-1.0, min(1.0, cos_theta))
+
+           if (cos_theta > SLERP_THRESHOLD) then
+               do i = 1, batch_size
+                   t = alphas(i)
+                   output(:,:,:,i) = (1.0 - t)*a(:,:,:,1) + t*b(:,:,:,1)
+               end do
+               return
+           end if
+
+           theta = acos(cos_theta)
+           sin_theta = sin(theta)
+
+           do i = 1, batch_size
+               t = alphas(i)
+               scale_a = sin((1.0 - t)*theta) / sin_theta
+               scale_b = sin(t * theta) / sin_theta
+               output(:,:,:,i) = scale_a * a(:,:,:,1) + scale_b * b(:,:,:,1)
+               norm_out = (1.0 - t)*norm_a + t*norm_b
+               output(:,:,:,i) = output(:,:,:,i) * (norm_out / norm2(reshape(output(:,:,:,i), [n])))
+           end do
+       end subroutine
+
+       subroutine decode_latent_batched(net, latent_a, latent_b, &
+               encoder_acts_a, encoder_acts_b, alphas, output)
+           type(autoencoder), intent(inout) :: net
+           real, intent(in) :: latent_a(:,:,:,:), latent_b(:,:,:,:)
+           type(tensor_cache), intent(in) :: encoder_acts_a(:), encoder_acts_b(:)
+           real, intent(in) :: alphas(:)
+           real, allocatable, intent(out) :: output(:,:,:,:)
+
+           real, allocatable :: layer_input(:,:,:,:), layer_output(:,:,:,:)
+           real, allocatable :: skip_interp(:,:,:,:), skip_projected(:,:,:,:)
+           real, allocatable :: aggregated_input(:,:,:,:)
+           integer :: i, skip_idx, batch_size
+
+           batch_size = size(alphas)
+
+           call slerp_tensor_batched(latent_a, latent_b, 1.0 - alphas, layer_input)
+
+           do i = 1, net%config%num_layers - 1
+               layer_input = upsample(layer_input, net%config%stride)
+
+               skip_idx = net%config%num_layers - i
+               call slerp_tensor_batched(encoder_acts_a(skip_idx)%tensor, &
+                   encoder_acts_b(skip_idx)%tensor, 1.0 - alphas, skip_interp)
+
+               if (net%config%concatenate) then
+                   aggregated_input = concatenate_channels(layer_input, skip_interp)
+               else
+                   call conv_forward(net%skip_projection(i), skip_interp, skip_projected)
+                   aggregated_input = layer_input + skip_projected
+               end if
+
+               call conv_forward(net%decoder(i), aggregated_input, layer_output)
+               layer_output = relu_forward(layer_output)
+               layer_input = layer_output
+           end do
+
+           layer_input = upsample(layer_input, net%config%stride)
+           call conv_forward(net%decoder(net%config%num_layers), layer_input, output)
+           output = sigmoid_forward(output)
+       end subroutine
+
        subroutine decode_latent_interpolated(net, latent_a, latent_b, &
                encoder_acts_a, encoder_acts_b, alpha, output)
            type(autoencoder), intent(inout) :: net

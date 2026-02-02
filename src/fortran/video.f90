@@ -317,6 +317,7 @@ contains
 
         type(tensor_cache), allocatable :: acts_start(:), acts_end(:)
         real, allocatable :: dummy_latent(:,:,:,:)
+        real, allocatable :: alphas(:)
 
         clock_division = pop_number()
         num_frames = int(fps * 60.0 / bpm / clock_division)
@@ -381,18 +382,16 @@ contains
             dummy_latent, acts_end)
 
         allocate(frames(channels, height, width, num_frames))
-
-        ! decode frames in parallel
-        call system_clock(t_start, count_rate)
-        !$omp parallel do private(i, alpha, output) schedule(dynamic)
+        allocate(alphas(num_frames))
         do i = 1, num_frames
-            alpha = real(num_frames - i) / real(max(num_frames - 1, 1))
-            call decode_latent_interpolated(net,&
-                latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile),&
-                acts_start, acts_end, alpha, output)
-            frames(:,:,:,i) = output(:,:,:,1)
+            alphas(i) = real(num_frames - i) / real(max(num_frames - 1, 1))
         end do
-        !$omp end parallel do
+
+        ! decode all frames in one batched call
+        call system_clock(t_start, count_rate)
+        call decode_latent_batched(net, &
+            latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile), &
+            acts_start, acts_end, alphas, frames)
         call system_clock(t_end)
 
         elapsed = real(t_end - t_start) / real(count_rate)
