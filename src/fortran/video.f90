@@ -303,7 +303,7 @@ contains
         integer :: start_tile, end_tile, candidate
         integer :: num_frames, theme_section
         real :: clock_division, theme_weight
-        integer :: i
+        integer :: i, j, k
         real :: score, best_score, alpha
         integer, allocatable :: pool(:)
         integer :: min_hits
@@ -382,16 +382,21 @@ contains
             dummy_latent, acts_end)
 
         allocate(frames(channels, height, width, num_frames))
-        allocate(alphas(num_frames))
-        do i = 1, num_frames
-            alphas(i) = real(num_frames - i) / real(max(num_frames - 1, 1))
-        end do
 
-        ! decode all frames in one batched call
+        ! decode frames in batches of 8
         call system_clock(t_start, count_rate)
-        call decode_latent_batched(net, &
-            latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile), &
-            acts_start, acts_end, alphas, frames)
+        do i = 1, num_frames, 8
+            j = min(i + 7, num_frames)
+            allocate(alphas(j - i + 1))
+            do k = i, j
+                alphas(k - i + 1) = real(num_frames - k) / real(max(num_frames - 1, 1))
+            end do
+            call decode_latent_batched(net, &
+                latent_tiles(:,:,:, start_tile:start_tile), latent_tiles(:,:,:, end_tile:end_tile), &
+                acts_start, acts_end, alphas, output)
+            frames(:,:,:, i:j) = output
+            deallocate(alphas)
+        end do
         call system_clock(t_end)
 
         elapsed = real(t_end - t_start) / real(count_rate)
