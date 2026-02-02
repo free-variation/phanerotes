@@ -383,8 +383,9 @@ contains
 
         allocate(frames(channels, height, width, num_frames))
 
-        ! decode frames in batches of 8
+        ! decode frames in batches of 8, parallelized
         call system_clock(t_start, count_rate)
+        !$omp parallel do private(i, j, k, alphas, output) schedule(dynamic)
         do i = 1, num_frames, 8
             j = min(i + 7, num_frames)
             allocate(alphas(j - i + 1))
@@ -397,6 +398,7 @@ contains
             frames(:,:,:, i:j) = output
             deallocate(alphas)
         end do
+        !$omp end parallel do
         call system_clock(t_end)
 
         elapsed = real(t_end - t_start) / real(count_rate)
