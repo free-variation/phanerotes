@@ -3,19 +3,23 @@
 # analyze audio to set fps and duration for finalize-video
 96 24 "projects/bellcaire/fort-greene-2.mp3" analyze-audio
 
+# chroma: probability max_offset period
+0.1 10.0 4 set-chroma
+
 "projects/bellcaire" prepare-sequential-images
 
 : save-frames
-    empty-image-stack?
+    0?
     sdup s. cr
+    effect-frame aberrate
     save
-    save-frames ;
+    1 - save-frames ;
 
 : process-pair
     empty-string-stack?
     10 generate-sequential-images
-    drop drop
     save-frames
+    drop
     process-pair ;
 
 process-pair
