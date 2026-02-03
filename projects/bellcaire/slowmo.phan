@@ -1,0 +1,28 @@
+"models/ae-weights-576x384-add.bin" load-model
+
+# analyze audio to set fps and duration for finalize-video
+96 24 "projects/bellcaire/fort-greene-2.mp3" analyze-audio
+
+"projects/bellcaire" prepare-sequential-images
+
+: save-frames
+    empty-image-stack?
+    sdup s. cr
+    save
+    save-frames ;
+
+: process-pair
+    empty-string-stack?
+    10 generate-sequential-images
+    drop drop
+    save-frames
+    process-pair ;
+
+process-pair
+
+# no fades for slow-mo
+1 0.0 0.0 "black" "black"
+    "projects/bellcaire/frames"
+    "projects/bellcaire/bellcaire-slowmo.mp4"
+    "projects/bellcaire/fort-greene-2.mp3"
+    preview-video

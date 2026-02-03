@@ -519,7 +519,7 @@ contains
             denoise_filter = "nlmeans=s=3:p=7:r=15,unsharp=5:5:2.0,"
         end if
 
-        write(filter_chain, '(A,A,A,F0.2,A,A,A,F0.2,A,F0.2,A,A)') &
+        write(filter_chain, '(A,A,A,F5.2,A,A,A,F7.2,A,F5.2,A,A)') &
             trim(scale_filter), &
             trim(denoise_filter), &
             "fade=t=in:st=0:d=", fade_in, &
@@ -620,6 +620,102 @@ contains
         pixels(3,:,:) = b_channel(1,:,:)
 
         call push_image(pixels)
+    end subroutine
+
+    ! ----------- create video from input video frames ----------
+
+    subroutine prepare_sequential_images()
+        character(MAX_STRING_LENGTH), allocatable :: image_filenames(:)
+        integer :: i
+        integer :: num_images
+
+        project_dir = pop_string()
+        
+        ! read in all the images from the project directory
+        image_filenames = directory_files(trim(project_dir) // "/input_frames", "*.png")
+        num_images = size(image_filenames)
+
+        do i = num_images, 1, -1
+            call push_string(trim(project_dir) // "/input_frames/" // trim(image_filenames(i)))
+        end do
+        print '(A,I0,A)', "Found ", num_images, " input frames"
+
+        ! create frames output directory
+        call execute_command_line("mkdir -p " // trim(project_dir) // "/frames")
+    end subroutine
+
+    subroutine generate_sequential_images()
+        character(MAX_STRING_LENGTH) :: image_filename1, image_filename2, frame_filename
+        integer :: num_frames
+        integer :: num_channels, height, width
+        real, allocatable :: img(:,:,:), img4d(:,:,:,:)
+        real, allocatable :: latent1(:,:,:,:), latent2(:,:,:,:)
+        real, allocatable :: output(:,:,:,:)
+        real, allocatable :: frames(:,:,:,:)
+        type(tensor_cache), allocatable :: acts1(:), acts2(:)
+        real :: alpha
+        integer :: i
+        integer(8) :: t_start, t_end, count_rate
+        real :: elapsed, per_frame
+
+        image_filename1 = pop_string()
+        image_filename2 = pop_string()
+        if (string_stack_top > 0) call push_string(image_filename2)
+
+        num_frames = int(pop_number())
+
+        print '(A,I0,A,I0,A,I0,A)', &
+            "transition ", current_frame, "-", current_frame + num_frames - 1, &
+            " (", num_frames, " frames)"
+        print '(A,A)', "  ", trim(image_filename1)
+        print '(A,A)', "  ", trim(image_filename2)
+
+        ! load and encode both images
+        img = load_image(image_filename1)
+        num_channels = size(img, 1)
+        height = size(img, 2)
+        width = size(img, 3)
+        img4d = reshape(img, [num_channels, height, width, 1])
+        deallocate(img)
+        call encoder_forward(net, img4d, latent1, acts1)
+        deallocate(img4d)
+
+        img = load_image(image_filename2)
+        img4d = reshape(img, [num_channels, height, width, 1])
+        deallocate(img)
+        call encoder_forward(net, img4d, latent2, acts2)
+        deallocate(img4d)
+
+        allocate(frames(num_channels, height, width, num_frames))
+
+        call system_clock(t_start, count_rate)
+        !$omp parallel do private(i, alpha, output) schedule(dynamic)
+        do i = 1, num_frames
+            alpha = real(num_frames - i) / real(max(num_frames - 1, 1))
+            call decode_latent_interpolated(net, latent1, latent2, acts1, acts2, alpha, output)
+            frames(:,:,:,i) = output(:,:,:,1)
+        end do
+        !$omp end parallel do
+        call system_clock(t_end)
+
+        elapsed = real(t_end - t_start) / real(count_rate)
+        per_frame = elapsed / real(num_frames)
+        print '(A,F6.2,A,F6.0,A)', "  decode: ", elapsed, "s (", per_frame * 1000, "ms/frame)"
+
+        deallocate(latent1, acts1, latent2, acts2)
+
+        ! push frames and filenames to stacks (reverse order so first frame ends on top)
+        do i = num_frames, 1, -1
+            call push_image(frames(:,:,:,i))
+            write(frame_filename, '(A,A,I0.5,A)') trim(project_dir), "/frames/frame_", current_frame + i - 1, ".bmp"
+            call push_string(frame_filename)
+        end do
+        deallocate(frames)
+
+        current_frame = current_frame + num_frames
+
+        call push_number(real(current_frame))
+        call push_number(real(num_frames))
     end subroutine
 
 end module

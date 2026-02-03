@@ -283,6 +283,10 @@ module interpreter
                 call load_frames()
             case ("set-seed")
                 call set_seed()
+            case ("prepare-sequential-images")
+                call prepare_sequential_images()
+            case ("generate-sequential-images")
+                call generate_sequential_images()
 
             case default
                 print *, "unknown word: ", trim(token)

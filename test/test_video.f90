@@ -28,7 +28,9 @@ contains
             new_unittest("roll_chroma", test_roll_chroma), &
             new_unittest("wobble", test_wobble), &
             new_unittest("aberrate", test_aberrate), &
-            new_unittest("load_frames", test_load_frames) &
+            new_unittest("load_frames", test_load_frames), &
+            new_unittest("prepare_sequential_images", test_prepare_sequential_images), &
+            new_unittest("generate_sequential_images", test_generate_sequential_images) &
         ]
     end subroutine
 
@@ -409,6 +411,118 @@ contains
         call check(error, index(fn3, "frame_00003") > 0, "third filename should be frame_00003")
         if (allocated(error)) return
         call check(error, abs(img3(1,1,1) - 0.9) < 0.02, "third frame should have value ~0.9")
+        if (allocated(error)) return
+
+        ! cleanup
+        call execute_command_line("rm -rf " // trim(test_dir))
+    end subroutine
+
+
+    subroutine test_prepare_sequential_images(error)
+        type(error_type), allocatable, intent(out) :: error
+        character(MAX_STRING_LENGTH) :: test_dir, fn1, fn2, fn3
+        real, allocatable :: img(:,:,:)
+        logical :: success
+        integer :: count
+
+        test_dir = "test/fixtures/slowmo"
+
+        ! create test directory and input frames
+        call execute_command_line("mkdir -p " // trim(test_dir) // "/input_frames")
+        call execute_command_line("mkdir -p " // trim(test_dir) // "/frames")
+
+        ! create 3 small test images
+        allocate(img(3, 48, 64))
+        img = 0.3
+        call save_image(trim(test_dir) // "/input_frames/frame_001.png", img, success)
+        img = 0.5
+        call save_image(trim(test_dir) // "/input_frames/frame_002.png", img, success)
+        img = 0.7
+        call save_image(trim(test_dir) // "/input_frames/frame_003.png", img, success)
+
+        ! call prepare_sequential_images
+        call push_string(test_dir)
+        call prepare_sequential_images()
+
+        ! should have 3 filenames on stack (first on top)
+        fn1 = pop_string()
+        call check(error, index(fn1, "frame_001") > 0, "first filename should be frame_001")
+        if (allocated(error)) return
+
+        fn2 = pop_string()
+        call check(error, index(fn2, "frame_002") > 0, "second filename should be frame_002")
+        if (allocated(error)) return
+
+        fn3 = pop_string()
+        call check(error, index(fn3, "frame_003") > 0, "third filename should be frame_003")
+        if (allocated(error)) return
+
+        ! cleanup
+        call execute_command_line("rm -rf " // trim(test_dir))
+    end subroutine
+
+
+    subroutine test_generate_sequential_images(error)
+        type(error_type), allocatable, intent(out) :: error
+        character(MAX_STRING_LENGTH) :: test_dir, fn
+        real, allocatable :: img(:,:,:), result(:,:,:)
+        logical :: success
+        integer :: num_frames, i, current_frame_out
+
+        call setup()  ! load model
+
+        test_dir = "test/fixtures/slowmo2"
+
+        ! create test directory
+        call execute_command_line("mkdir -p " // trim(test_dir) // "/input_frames")
+        call execute_command_line("mkdir -p " // trim(test_dir) // "/frames")
+
+        ! create 2 test images at autoencoder size (576x384)
+        allocate(img(3, 384, 576))
+        img = 0.3
+        call save_image(trim(test_dir) // "/input_frames/frame_001.png", img, success)
+        img = 0.7
+        call save_image(trim(test_dir) // "/input_frames/frame_002.png", img, success)
+
+        ! set project_dir for output filenames
+        project_dir = test_dir
+        current_frame = 1
+
+        ! push filenames (second on top so first is popped first after second push-back)
+        call push_string(trim(test_dir) // "/input_frames/frame_002.png")
+        call push_string(trim(test_dir) // "/input_frames/frame_001.png")
+
+        ! request 4 interpolated frames
+        call push_number(4.0)
+        call generate_sequential_images()
+
+        ! check stack outputs
+        num_frames = int(pop_number())
+        call check(error, num_frames == 4, "should generate 4 frames")
+        if (allocated(error)) return
+
+        current_frame_out = int(pop_number())
+        call check(error, current_frame_out == 5, "current_frame should be 5 (1 + 4)")
+        if (allocated(error)) return
+
+        ! check we got 4 images and filenames
+        do i = 1, 4
+            fn = pop_string()
+            call check(error, index(fn, "/frames/frame_") > 0, "filename should contain /frames/frame_")
+            if (allocated(error)) return
+
+            result = pop_image()
+            call check(error, size(result, 1) == 3, "image should have 3 channels")
+            if (allocated(error)) return
+            call check(error, size(result, 2) == 384, "image height should be 384")
+            if (allocated(error)) return
+            call check(error, size(result, 3) == 576, "image width should be 576")
+            if (allocated(error)) return
+        end do
+
+        ! second filename should still be on stack (pushed back)
+        fn = pop_string()
+        call check(error, index(fn, "frame_002") > 0, "frame_002 should be pushed back for next pair")
         if (allocated(error)) return
 
         ! cleanup
